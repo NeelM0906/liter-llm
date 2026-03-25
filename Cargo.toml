@@ -1,0 +1,58 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/kreuzberg-dev/liter-lm"
+homepage = "https://kreuzberg.dev"
+authors = ["Na'aman Hirschfeld <naaman@kreuzberg.dev>"]
+description = "A universal LM API client with polyglot bindings"
+keywords = ["llm", "openai", "api-client", "ai", "kreuzberg"]
+
+[workspace.dependencies]
+base64 = "0.22"
+bytes = "1"
+
+# CLI (for tools)
+clap = { version = "4", features = ["derive"] }
+futures-core = "0.3"
+
+# Binding frameworks
+magnus = "0.8"
+napi = { version = "3", features = ["napi4", "serde-json"] }
+napi-build = "2"
+napi-derive = "3"
+pin-project-lite = "0.2"
+pyo3 = { version = "0.28", features = ["abi3-py310"] }
+rb-sys = "0.9"
+# Async / HTTP
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "multipart"] }
+rustler = "0.37"
+
+# Security
+secrecy = { version = "0.10", features = ["serde"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+url = "2"
+wasm-bindgen = "0.2"
+wasm-bindgen-test = "0.3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true

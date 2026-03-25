@@ -1,0 +1,93 @@
+version: "3"
+
+tasks:
+  vendor:
+    desc: Vendor ts-pack-core into PHP package
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+    cmds:
+      - python3 scripts/ci/php/vendor-core.py
+
+  build:
+    desc: Build PHP extension (requires php-config)
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+    cmds:
+      - task: vendor
+      - cargo build --release --manifest-path crates/ts-pack-php/Cargo.toml
+
+  build:dev:
+    desc: Build PHP extension in debug mode
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+    cmds:
+      - task: vendor
+      - cargo build --manifest-path crates/ts-pack-php/Cargo.toml
+
+  test:
+    desc: Run PHP smoke test
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+    cmds:
+      - php examples/php_smoke/convert.php
+
+  format:
+    desc: Format PHP code
+    dir: packages/php
+    cmds:
+      - cmd: composer exec -- php-cs-fixer fix
+        platforms: [linux, darwin]
+
+  format:check:
+    desc: Check PHP formatting (CI)
+    dir: packages/php
+    cmds:
+      - cmd: composer exec -- php-cs-fixer fix --dry-run --diff
+        platforms: [linux, darwin]
+
+  lint:
+    desc: Lint PHP code
+    dir: packages/php
+    cmds:
+      - cmd: composer exec -- phpstan analyse --memory-limit=512M
+        platforms: [linux, darwin]
+
+  lint:check:
+    desc: Check PHP linting without modifications (CI)
+    dir: packages/php
+    cmds:
+      - cmd: composer exec -- phpstan analyse --memory-limit=512M
+        platforms: [linux, darwin]
+
+  clean:
+    desc: Clean PHP build artifacts
+    cmds:
+      - rm -rf crates/ts-pack-php/vendor crates/ts-pack-php/target
+
+  update:
+    desc: Update PHP dependencies to latest versions (including major versions)
+    cmds:
+      - echo "Updating root composer.json dependencies..."
+      - composer update --with-all-dependencies || true
+      - echo "Updating packages/php dependencies to latest versions..."
+      - cd packages/php && composer update --with-all-dependencies
+      - cd packages/php && echo "Checking remaining outdated dependencies..." && composer outdated --direct || true
+      - echo "Updating e2e/php dependencies to latest versions..."
+      - cd e2e/php && composer update --with-all-dependencies || true
+      - cd e2e/php && echo "Checking remaining outdated dependencies..." && composer outdated --direct || true
+
+  e2e:generate:
+    desc: Generate PHP E2E tests from fixtures
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+    cmds:
+      - cargo run -p e2e-generator -- generate --lang php
+
+  e2e:test:
+    desc: Run PHP E2E tests
+    dir: e2e/php
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+    cmds:
+      - composer install --no-progress --prefer-dist
+      - composer exec -- phpunit

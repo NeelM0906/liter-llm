@@ -1,0 +1,91 @@
+[project]
+name = "liter-lm"
+version = "0.1.0"
+description = "A universal LM API client with polyglot bindings — fast, type-safe, compiled"
+readme = "README.md"
+keywords = [
+  "ai",
+  "api-client",
+  "kreuzberg",
+  "llm",
+  "openai",
+]
+license = "MIT"
+authors = [ { name = "Na'aman Hirschfeld", email = "naaman@kreuzberg.dev" } ]
+requires-python = ">=3.10.0"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Natural Language :: English",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Typing :: Typed",
+]
+urls.documentation = "https://github.com/kreuzberg-dev/liter-lm#readme"
+urls.homepage = "https://github.com/kreuzberg-dev/liter-lm"
+urls.issues = "https://github.com/kreuzberg-dev/liter-lm/issues"
+urls.repository = "https://github.com/kreuzberg-dev/liter-lm"
+
+[dependency-groups]
+dev = [
+  "anyio>=4.10.0",
+  "jsonschema>=4.0.0",
+  "mypy>=1.18.2",
+  "prek>=0.2.19",
+  "pytest>=9.0.0",
+  "pyyaml>=6.0.0",
+  "ruff>=0.14.6",
+  "typing-extensions>=4.15.0",
+  "uv-bump",
+]
+
+[tool.uv]
+sources.uv-bump = { git = "https://github.com/Goldziher/uv-bump" }
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+src = [ "scripts", "tools/schema-bootstrap" ]
+format.docstring-code-line-length = 120
+format.docstring-code-format = true
+lint.select = [ "ALL" ]
+lint.ignore = [
+  "ANN401", # dynamically typed ANY
+  "COM812", # Conflicts with formatter
+  "D100",   # pydocstyle - missing docstring in public module
+  "D104",   # pydocstyle - missing docstring in public package
+  "D107",   # pydocstyle - missing docstring in __init__
+  "D205",   # pydocstyle - 1 blank line required between summary line and description
+  "E501",   # pycodestyle line too long, handled by ruff format
+  "EM",     # Exception messages
+  "FBT",    # Boolean values
+  "FIX",    # we allow todo and fixme comments
+  "ISC001", # Conflicts with formatter
+  "TD",     # we allow todo and fixme comments
+  "TRY",    # Try except block, rules are too strict
+]
+lint.per-file-ignores."scripts/**/*.*" = [ "ASYNC", "D", "S", "T201" ]
+lint.isort.known-first-party = [ "scripts" ]
+lint.pydocstyle.convention = "google"
+
+[tool.codespell]
+ignore-words-list = "crate,wast,wit"
+
+[tool.pyproject-fmt]
+keep_full_version = true
+max_supported_python = "3.14"
+
+[tool.mypy]
+packages = [ "scripts" ]
+python_version = "3.10"
+disallow_untyped_decorators = true
+disallow_any_unimported = true
+show_error_codes = true
+strict = true
+warn_unreachable = true

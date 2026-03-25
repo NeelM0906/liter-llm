@@ -1,0 +1,109 @@
+version: "3"
+
+vars:
+  FFI_LIB_PATH: '{{.PROJECT_ROOT}}/target/release/libts_pack_ffi.{{if eq OS "darwin"}}dylib{{else if eq OS "windows"}}dll{{else}}so{{end}}'
+  DOTNET_VERSION: "9.0"
+
+tasks:
+  build:ffi:
+    desc: Build FFI shared library for C#
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+    cmds:
+      - cargo build -p ts-pack-ffi --release
+
+  build:
+    desc: Build FFI library and C# package
+    deps: [build:ffi]
+    dir: packages/csharp
+    cmds:
+      - dotnet build TreeSitterLanguagePack.sln -c Release
+
+  build:ci:
+    desc: Build C# package (CI, FFI already built)
+    dir: packages/csharp
+    cmds:
+      - dotnet build TreeSitterLanguagePack.sln -c Release
+
+  test:
+    desc: Run C# tests (requires FFI built first)
+    deps: [build:ffi]
+    dir: packages/csharp
+    env:
+      TSPACK_FFI_DIR: "{{.FFI_LIB_PATH}}"
+      LD_LIBRARY_PATH: "{{.PROJECT_ROOT}}/target/release:${LD_LIBRARY_PATH:-}"
+      DYLD_LIBRARY_PATH: "{{.PROJECT_ROOT}}/target/release:${DYLD_LIBRARY_PATH:-}"
+    cmds:
+      - dotnet test TreeSitterLanguagePack.sln -c Release --no-build
+
+  test:ci:
+    desc: Run C# tests (CI, FFI already available)
+    dir: packages/csharp
+    cmds:
+      - dotnet test TreeSitterLanguagePack.sln -c Release
+
+  package:
+    desc: Create NuGet package
+    deps: [build]
+    dir: packages/csharp/TreeSitterLanguagePack
+    cmds:
+      - dotnet pack -c Release
+
+  lint:
+    desc: Lint C# code
+    dir: packages/csharp
+    cmds:
+      - dotnet build TreeSitterLanguagePack.sln -c Release -warnaserror
+
+  format:
+    desc: Format C# code
+    dir: packages/csharp
+    cmds:
+      - dotnet format TreeSitterLanguagePack.sln
+
+  format:check:
+    desc: Check C# formatting (CI)
+    dir: packages/csharp
+    cmds:
+      - dotnet format TreeSitterLanguagePack.sln --verify-no-changes
+
+  lint:check:
+    desc: Check C# linting without modifications (CI)
+    dir: packages/csharp
+    cmds:
+      - dotnet build TreeSitterLanguagePack.sln -c Release -warnaserror
+
+  update:
+    desc: Update C# dependencies to latest versions (including major versions)
+    dir: packages/csharp
+    cmds:
+      - echo "Updating C# dependencies to latest versions..."
+      - dotnet tool install --global dotnet-outdated-tool || dotnet tool update --global dotnet-outdated-tool
+      - dotnet outdated TreeSitterLanguagePack.sln --upgrade
+      - echo "Checking remaining outdated packages..."
+      - dotnet list TreeSitterLanguagePack.sln package --outdated || true
+
+  clean:
+    desc: Clean C# build artifacts
+    dir: packages/csharp
+    cmds:
+      - dotnet clean TreeSitterLanguagePack.sln -c Release
+      - dotnet clean TreeSitterLanguagePack.sln -c Debug
+
+  e2e:generate:
+    desc: Generate C# E2E tests from fixtures
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+    cmds:
+      - cargo run -p e2e-generator -- generate --lang csharp
+
+  e2e:test:
+    desc: Run C# E2E tests
+    deps: [build:ffi]
+    dir: e2e/csharp
+    env:
+      TSPACK_FFI_DIR: "{{.FFI_LIB_PATH}}"
+      LD_LIBRARY_PATH: "{{.PROJECT_ROOT}}/target/release:${LD_LIBRARY_PATH:-}"
+      DYLD_LIBRARY_PATH: "{{.PROJECT_ROOT}}/target/release:${DYLD_LIBRARY_PATH:-}"
+    cmds:
+      - dotnet test -c Release

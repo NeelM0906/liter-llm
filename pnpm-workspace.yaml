@@ -1,0 +1,3 @@
+packages:
+  - "crates/ts-pack-node"
+  - "e2e/typescript"

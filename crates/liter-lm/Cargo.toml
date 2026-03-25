@@ -1,0 +1,24 @@
+[package]
+name = "liter-lm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "A universal LM API client — fast, type-safe, compiled"
+keywords = ["llm", "openai", "api-client", "ai", "kreuzberg"]
+
+[dependencies]
+bytes = { workspace = true }
+futures-core = { workspace = true }
+pin-project-lite = { workspace = true }
+reqwest = { workspace = true }
+secrecy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }

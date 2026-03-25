@@ -1,0 +1,274 @@
+version: "3"
+
+includes:
+  rust:
+    taskfile: .task/rust.yml
+  python:
+    taskfile: .task/python.yml
+  node:
+    taskfile: .task/node.yml
+  go:
+    taskfile: .task/go.yml
+  java:
+    taskfile: .task/java.yml
+  elixir:
+    taskfile: .task/elixir.yml
+  c:
+    taskfile: .task/c.yml
+  ruby:
+    taskfile: .task/ruby.yml
+  wasm:
+    taskfile: .task/wasm.yml
+  php:
+    taskfile: .task/php.yml
+  csharp:
+    taskfile: .task/csharp.yml
+  version:
+    taskfile: .task/version.yml
+
+vars:
+  PROJECT_ROOT:
+    sh: pwd
+  VERSION:
+    sh: python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])"
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  setup:
+    desc: "Install all dependencies and initialize project. Idempotent - safe to re-run anytime."
+    cmds:
+      - cmd: >-
+          bash -c '
+          echo "Setting up sdkman...";
+          if [ ! -d "$HOME/.sdkman" ]; then
+            echo "Installing sdkman...";
+            curl -s "https://get.sdkman.io" | bash;
+          else
+            echo "sdkman is already installed";
+          fi;
+          echo "Loading sdkman and installing tools from .sdkmanrc...";
+          source "$HOME/.sdkman/bin/sdkman-init.sh";
+          sdk env install;
+          '
+        platforms: [linux, darwin]
+      - cmd: echo "Setting up sdkman (skipped on Windows - use scoop or manual installation)..."
+        platforms: [windows]
+      - echo "Installing language tools..."
+      - task: rust:install
+      - task: python:install
+      - task: node:install
+      - task: ruby:install
+      - task: java:install
+      - task: go:install
+      - task: elixir:install
+      - task: csharp:install
+      - task: php:install
+      - task: c:install
+      - echo "Installing pre-commit hooks..."
+      - prek install
+      - prek install --hook-type commit-msg
+      - echo "Generating AI rules..."
+      - task: ai-rulez
+      - echo "Setup complete - safe to re-run anytime"
+
+  ai-rulez:
+    desc: Generate ai-rulez configuration files (CLAUDE.md, etc.)
+    cmds:
+      - npx -y ai-rulez@latest generate
+
+  build:
+    desc: Build core libraries and language bindings
+    cmds:
+      - task: rust:build
+
+  build:release:
+    desc: Build in release mode (optimized)
+    cmds:
+      - task: rust:build:release
+
+  test:
+    desc: Run test suites for all languages
+    cmds:
+      - task: rust:test
+
+  lint:
+    desc: Run all linters and formatters via prek (pre-commit framework)
+    cmds:
+      - prek run --all-files
+
+  check:
+    desc: Run all checks (lint + test)
+    cmds:
+      - task: lint
+      - task: test
+
+  format:
+    desc: Format all code
+    cmds:
+      - task: rust:format
+      - task: python:format
+      - task: ruby:format
+      - task: go:format
+      - task: java:format
+      - task: elixir:format
+
+  update:
+    desc: Update all dependencies to latest versions
+    cmds:
+      - echo "Updating Rust dependencies..."
+      - task: rust:update
+      - echo "Updating Python dependencies..."
+      - task: python:update
+      - echo "Updating TypeScript dependencies..."
+      - task: node:update
+      - echo "Updating Ruby dependencies..."
+      - task: ruby:update
+      - echo "Updating Go dependencies..."
+      - task: go:update
+      - echo "Updating Java dependencies..."
+      - task: java:update
+      - echo "Updating Elixir dependencies..."
+      - task: elixir:update
+      - echo "Updating WASM tools..."
+      - task: wasm:update
+      - echo "Updating PHP dependencies..."
+      - task: php:update
+      - echo "Updating C# dependencies..."
+      - task: csharp:update
+      - echo "Updating prek dependencies..."
+      - prek autoupdate
+      - echo "All dependencies updated"
+
+  clean:
+    desc: Clean all build artifacts
+    cmds:
+      - task: rust:clean
+      - task: python:clean
+      - task: ruby:clean
+      - task: wasm:clean
+      - task: elixir:clean
+
+  # Codegen (run after schema changes)
+  generate:types:
+    desc: Generate types from schemas/api/ for all languages
+    cmds:
+      - cargo run -p codegen -- types --target all
+
+  generate:providers:
+    desc: Generate provider code from schemas/providers.json
+    cmds:
+      - cargo run -p codegen -- providers --target all
+
+  generate:check:
+    desc: Verify generated code matches schemas (CI)
+    cmds:
+      - cargo run -p codegen -- check
+
+  generate:all:
+    desc: Regenerate all code from schemas
+    cmds:
+      - task: generate:types
+      - task: generate:providers
+      - task: e2e:generate:all
+
+  # E2E test generation
+  e2e:generate:all:
+    desc: Generate E2E tests for all languages from fixtures
+    cmds:
+      - cargo run -p codegen -- e2e --lang all
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  e2e:generate:rust:
+    desc: Generate and format Rust E2E tests
+    cmds:
+      - cargo run -p codegen -- e2e --lang rust
+      - cargo fmt --manifest-path e2e/rust/Cargo.toml
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  e2e:generate:python:
+    desc: Generate and lint Python E2E tests
+    cmds:
+      - cargo run -p codegen -- e2e --lang python
+      - uv run --no-sync ruff check --fix e2e/python/
+      - uv run --no-sync ruff format e2e/python/
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  e2e:generate:typescript:
+    desc: Generate TypeScript E2E tests
+    cmds:
+      - cargo run -p codegen -- e2e --lang typescript
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  e2e:generate:go:
+    desc: Generate and format Go E2E tests
+    cmds:
+      - cargo run -p codegen -- e2e --lang go
+      - gofmt -w e2e/go/
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  e2e:generate:java:
+    desc: Generate Java E2E tests
+    cmds:
+      - cargo run -p codegen -- e2e --lang java
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  e2e:generate:elixir:
+    desc: Generate Elixir E2E tests
+    cmds:
+      - cargo run -p codegen -- e2e --lang elixir
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  e2e:generate:ruby:
+    desc: Generate and format Ruby E2E tests
+    cmds:
+      - cargo run -p codegen -- e2e --lang ruby
+      - bundle exec rubocop -a e2e/ruby/ || true
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  e2e:generate:wasm:
+    desc: Generate WASM E2E tests
+    cmds:
+      - cargo run -p codegen -- e2e --lang wasm
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  e2e:generate:c:
+    desc: Generate C E2E tests
+    cmds:
+      - cargo run -p codegen -- e2e --lang c
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  e2e:generate:php:
+    desc: Generate PHP E2E tests
+    cmds:
+      - cargo run -p codegen -- e2e --lang php
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  e2e:generate:csharp:
+    desc: Generate C# E2E tests
+    cmds:
+      - cargo run -p codegen -- e2e --lang csharp
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  e2e:test:rust:
+    desc: Run Rust E2E tests (generate + format + test)
+    cmds:
+      - task: e2e:generate:rust
+      - cargo test --manifest-path e2e/rust/Cargo.toml
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
