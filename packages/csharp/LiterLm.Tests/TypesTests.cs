@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using Xunit;
 
 namespace LiterLm.Tests;
 
@@ -11,7 +12,7 @@ public class TypesTests
     [Fact]
     public void SystemMessage_RoundTrips()
     {
-        var msg = new SystemMessage("You are helpful.");
+        Message msg = new SystemMessage("You are helpful.");
         var json = LiterLmJson.Serialize(msg);
 
         json.Should().Contain("\"role\":\"system\"");
@@ -26,7 +27,7 @@ public class TypesTests
     [Fact]
     public void UserMessage_TextContent_RoundTrips()
     {
-        var msg = new UserMessage("Hello!");
+        Message msg = new UserMessage("Hello!");
         var json = LiterLmJson.Serialize(msg);
 
         json.Should().Contain("\"role\":\"user\"");
@@ -38,7 +39,7 @@ public class TypesTests
     {
         var toolCall = new ToolCall("call-1", ToolType.Function,
             new FunctionCall("get_weather", "{\"city\": \"Berlin\"}"));
-        var msg = new AssistantMessage(ToolCalls: [toolCall]);
+        Message msg = new AssistantMessage(ToolCalls: [toolCall]);
         var json = LiterLmJson.Serialize(msg);
 
         json.Should().Contain("\"role\":\"assistant\"");
@@ -226,5 +227,130 @@ public class TypesTests
         var ex = new ProviderException(503, "Service Unavailable");
         ex.HttpStatus.Should().Be(503);
         ex.ErrorCode.Should().Be(LlmException.ErrorCodes.ProviderError);
+    }
+
+    // ─── Additional Tests ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void EmbeddingResponse_Serialization()
+    {
+        var embedding = new EmbeddingObject(Object: "embedding", Embedding: [0.1, 0.2, 0.3], Index: 0);
+        var response = new EmbeddingResponse(
+            Object: "list",
+            Data: [embedding],
+            Model: "text-embedding-3-small",
+            Usage: new Usage(10L, 0L, 10L));
+        var json = LiterLmJson.Serialize(response);
+
+        json.Should().Contain("\"model\":\"text-embedding-3-small\"");
+        json.Should().Contain("\"data\"");
+        json.Should().Contain("0.1");
+        json.Should().Contain("0.2");
+
+        var decoded = LiterLmJson.Deserialize<EmbeddingResponse>(json);
+        decoded.Should().NotBeNull();
+        decoded!.Model.Should().Be("text-embedding-3-small");
+        decoded.Data.Should().HaveCount(1);
+        decoded.Data[0].Embedding.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public void ChatCompletionChunk_Serialization()
+    {
+        var delta = new StreamDelta(Role: "assistant", Content: "Hello");
+        var choice = new StreamChoice(Index: 0, Delta: delta, FinishReason: null);
+        var chunk = new ChatCompletionChunk(
+            Id: "chunk-1",
+            Object: "chat.completion.chunk",
+            Created: 1700000000,
+            Model: "gpt-4o",
+            Choices: [choice]);
+
+        var json = LiterLmJson.Serialize(chunk);
+
+        json.Should().Contain("\"id\":\"chunk-1\"");
+        json.Should().Contain("\"delta\"");
+        json.Should().Contain("\"Hello\"");
+
+        var decoded = LiterLmJson.Deserialize<ChatCompletionChunk>(json);
+        decoded.Should().NotBeNull();
+        decoded!.Id.Should().Be("chunk-1");
+        decoded.Choices.Should().HaveCount(1);
+        decoded.Choices[0].Delta.Content.Should().Be("Hello");
+    }
+
+    [Theory]
+    [InlineData(LlmException.ErrorCodes.Unknown)]
+    [InlineData(LlmException.ErrorCodes.InvalidRequest)]
+    [InlineData(LlmException.ErrorCodes.Authentication)]
+    [InlineData(LlmException.ErrorCodes.RateLimit)]
+    [InlineData(LlmException.ErrorCodes.NotFound)]
+    [InlineData(LlmException.ErrorCodes.ProviderError)]
+    [InlineData(LlmException.ErrorCodes.StreamError)]
+    [InlineData(LlmException.ErrorCodes.Serialization)]
+    public void ErrorCodes_AllValuesPresent(int errorCode)
+    {
+        errorCode.Should().BeGreaterThanOrEqualTo(1000);
+    }
+
+    [Fact]
+    public void ToolMessage_Serialization()
+    {
+        Message msg = new ToolMessage(Content: "Tool result here", ToolCallId: "call-123");
+        var json = LiterLmJson.Serialize(msg);
+
+        json.Should().Contain("\"role\":\"tool\"");
+        json.Should().Contain("\"tool_call_id\":\"call-123\"");
+        json.Should().Contain("Tool result here");
+
+        var decoded = LiterLmJson.Deserialize<Message>(json);
+        decoded.Should().BeOfType<ToolMessage>()
+            .Which.Content.Should().Be("Tool result here");
+    }
+
+    [Fact]
+    public void DeveloperMessage_Serialization()
+    {
+        Message msg = new DeveloperMessage("Always be accurate.");
+        var json = LiterLmJson.Serialize(msg);
+
+        json.Should().Contain("\"role\":\"developer\"");
+        json.Should().Contain("Always be accurate.");
+
+        var decoded = LiterLmJson.Deserialize<Message>(json);
+        decoded.Should().BeOfType<DeveloperMessage>()
+            .Which.Content.Should().Be("Always be accurate.");
+    }
+
+    [Fact]
+    public void ResponseFormat_JsonObject_Serialization()
+    {
+        var json = LiterLmJson.Serialize(ResponseFormat.JsonObject);
+
+        json.Should().Contain("\"type\":\"json_object\"");
+    }
+
+    [Fact]
+    public void FunctionMessage_Serialization()
+    {
+        Message msg = new FunctionMessage(Content: "Function result", Name: "my_function");
+        var json = LiterLmJson.Serialize(msg);
+
+        json.Should().Contain("\"role\":\"function\"");
+        json.Should().Contain("\"name\":\"my_function\"");
+        json.Should().Contain("Function result");
+    }
+
+    [Fact]
+    public void ProviderException_AllHttpStatuses()
+    {
+        var ex502 = new ProviderException(502, "Bad Gateway");
+        ex502.HttpStatus.Should().Be(502);
+
+        var ex503 = new ProviderException(503, "Unavailable");
+        ex503.HttpStatus.Should().Be(503);
+
+        var ex504 = new ProviderException(504, "Timeout");
+        ex504.HttpStatus.Should().Be(504);
     }
 }

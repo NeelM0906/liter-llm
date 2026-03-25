@@ -496,3 +496,244 @@ func TestWithBaseURL_TrailingSlashStripped(t *testing.T) {
 		t.Errorf("path contains double slash: %q", gotPath)
 	}
 }
+
+// ─── Additional Tests ─────────────────────────────────────────────────────
+
+func TestChat_WithToolCalling(t *testing.T) {
+	t.Parallel()
+	respBody := `{
+		"id": "chatcmpl-with-tools",
+		"object": "chat.completion",
+		"created": 1700000000,
+		"model": "gpt-4o",
+		"choices": [{
+			"index": 0,
+			"message": {
+				"role": "assistant",
+				"tool_calls": [
+					{
+						"id": "call-1",
+						"type": "function",
+						"function": {"name": "get_weather", "arguments": "{\"city\": \"Berlin\"}"}
+					}
+				]
+			},
+			"finish_reason": "tool_calls"
+		}],
+		"usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
+	}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify request contains tools and tool_choice
+		var reqBody struct {
+			Tools      []interface{} `json:"tools"`
+			ToolChoice interface{}   `json:"tool_choice"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Errorf("failed to decode request: %v", err)
+		}
+		if len(reqBody.Tools) == 0 {
+			t.Error("expected tools in request, got none")
+		}
+		if reqBody.ToolChoice == nil {
+			t.Error("expected tool_choice in request, got none")
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(respBody)) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	toolChoice := literlm.NewSpecificToolChoice("get_weather")
+	tool := literlm.ChatCompletionTool{
+		Type: literlm.ToolTypeFunction,
+		Function: literlm.FunctionDefinition{
+			Name: "get_weather",
+		},
+	}
+
+	resp, err := client.Chat(context.Background(), &literlm.ChatCompletionRequest{
+		Model:      "gpt-4o",
+		Messages:   []literlm.Message{literlm.NewTextMessage(literlm.RoleUser, "get weather")},
+		Tools:      []literlm.ChatCompletionTool{tool},
+		ToolChoice: &toolChoice,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *resp.Choices[0].FinishReason != literlm.FinishReasonToolCalls {
+		t.Errorf("expected finish_reason tool_calls, got %v", resp.Choices[0].FinishReason)
+	}
+}
+
+func TestChatStream_ChunkOrder(t *testing.T) {
+	t.Parallel()
+	sseBody := "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n" +
+		"data: {\"id\":\"c2\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \"},\"finish_reason\":null}]}\n\n" +
+		"data: {\"id\":\"c3\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"world\"},\"finish_reason\":\"stop\"}]}\n\n" +
+		"data: [DONE]\n\n"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(sseBody)) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	var chunks []*literlm.ChatCompletionChunk
+	err := client.ChatStream(context.Background(), &literlm.ChatCompletionRequest{
+		Model:    "gpt-4o",
+		Messages: []literlm.Message{literlm.NewTextMessage(literlm.RoleUser, "hi")},
+	}, func(c *literlm.ChatCompletionChunk) error {
+		chunks = append(chunks, c)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify chunks arrive in order
+	if len(chunks) != 3 {
+		t.Fatalf("expected 3 chunks, got %d", len(chunks))
+	}
+	if chunks[0].ID != "c1" || chunks[1].ID != "c2" || chunks[2].ID != "c3" {
+		t.Error("chunks not in order")
+	}
+}
+
+func TestEmbed_BatchInput(t *testing.T) {
+	t.Parallel()
+	respBody := `{
+		"object": "list",
+		"data": [
+			{"object": "embedding", "embedding": [0.1, 0.2, 0.3], "index": 0},
+			{"object": "embedding", "embedding": [0.4, 0.5, 0.6], "index": 1},
+			{"object": "embedding", "embedding": [0.7, 0.8, 0.9], "index": 2}
+		],
+		"model": "text-embedding-3-small",
+		"usage": {"prompt_tokens": 10, "completion_tokens": 0, "total_tokens": 10}
+	}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody struct {
+			Input interface{} `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Errorf("failed to decode: %v", err)
+		}
+		// Verify input is array
+		if arr, ok := reqBody.Input.([]interface{}); !ok || len(arr) != 3 {
+			t.Error("expected array of 3 inputs")
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(respBody)) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	resp, err := client.Embed(context.Background(), &literlm.EmbeddingRequest{
+		Model: "text-embedding-3-small",
+		Input: literlm.NewEmbeddingInputMultiple([]string{"first", "second", "third"}),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Data) != 3 {
+		t.Fatalf("expected 3 embeddings, got %d", len(resp.Data))
+	}
+}
+
+func TestAPIErrorClassification(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		statusCode int
+		sentinel   error
+		name       string
+	}{
+		{http.StatusForbidden, literlm.ErrAuthentication, "403 Forbidden"},
+		{http.StatusBadGateway, literlm.ErrProviderError, "502 Bad Gateway"},
+		{http.StatusServiceUnavailable, literlm.ErrProviderError, "503 Service Unavailable"},
+		{http.StatusGatewayTimeout, literlm.ErrProviderError, "504 Gateway Timeout"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.statusCode)
+			}))
+			defer server.Close()
+
+			client := newTestClient(server.URL)
+			_, err := client.Chat(context.Background(), &literlm.ChatCompletionRequest{
+				Model:    "gpt-4o",
+				Messages: []literlm.Message{literlm.NewTextMessage(literlm.RoleUser, "hi")},
+			})
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, tc.sentinel) {
+				t.Errorf("expected %v, got %T: %v", tc.sentinel, err, err)
+			}
+		})
+	}
+}
+
+func TestStreamError_Wrapping(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		// Send valid chunk then invalid JSON
+		w.Write([]byte("data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n")) //nolint:errcheck
+		w.Write([]byte("data: {invalid json\n\n"))                                                                                                                                                             //nolint:errcheck
+	}))
+	defer server.Close()
+
+	client := newTestClient(server.URL)
+	count := 0
+	err := client.ChatStream(context.Background(), &literlm.ChatCompletionRequest{
+		Model:    "gpt-4o",
+		Messages: []literlm.Message{literlm.NewTextMessage(literlm.RoleUser, "hi")},
+	}, func(c *literlm.ChatCompletionChunk) error {
+		count++
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, literlm.ErrStream) {
+		t.Errorf("expected ErrStream, got %T: %v", err, err)
+	}
+	// Verify we got the first chunk before error
+	if count != 1 {
+		t.Errorf("expected 1 chunk before error, got %d", count)
+	}
+}
+
+func TestNewTextMessage_AllRoles(t *testing.T) {
+	t.Parallel()
+	roles := []literlm.Role{
+		literlm.RoleSystem,
+		literlm.RoleUser,
+		literlm.RoleAssistant,
+		literlm.RoleTool,
+		literlm.RoleDeveloper,
+	}
+
+	for _, role := range roles {
+		t.Run(string(role), func(t *testing.T) {
+			t.Parallel()
+			msg := literlm.NewTextMessage(role, "test content")
+			if msg.Role != role {
+				t.Errorf("expected role %q, got %q", role, msg.Role)
+			}
+			var content string
+			if err := json.Unmarshal(msg.Content, &content); err != nil {
+				t.Fatalf("failed to unmarshal content: %v", err)
+			}
+			if content != "test content" {
+				t.Errorf("expected content %q, got %q", "test content", content)
+			}
+		})
+	}
+}

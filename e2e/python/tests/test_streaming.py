@@ -5,7 +5,15 @@ from __future__ import annotations
 import pytest
 
 from conftest import MockRoute, MockServerInfo
-from liter_lm import LlmClient  # noqa: E402
+from liter_lm import (  # noqa: E402
+    LlmClient,
+    AuthenticationError,
+    RateLimitedError,
+    ServerError,
+    NotFoundError,
+    ServiceUnavailableError,
+    BadRequestError,
+)
 
 
 @pytest.mark.asyncio
@@ -38,6 +46,21 @@ async def test_basic_stream(mock_server: MockServerInfo) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mock_server", [[
+    MockRoute("/chat/completions", "POST", 200, "null"),
+]], indirect=True)
+async def test_empty_stream(mock_server: MockServerInfo) -> None:
+    """Streaming chat completion that produces no content chunks before the DONE signal"""
+    import json
+    client = LlmClient(api_key="test-key", base_url=mock_server.url, max_retries=0)
+    request = json.loads("{\"messages\":[{\"content\":\"Say nothing\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true}")
+    chunks = []
+    async for chunk in client.chat_stream(**request):
+        chunks.append(chunk)
+    assert len(chunks) >= 1, f"Expected at least 1 chunk(s), got {len(chunks)}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mock_server", [[
     MockRoute(
         "/chat/completions",
         "POST",
@@ -60,3 +83,70 @@ async def test_stream_done_signal(mock_server: MockServerInfo) -> None:
     assert len(chunks) >= 1, f"Expected at least 1 chunk(s), got {len(chunks)}"
     content = "".join(c.choices[0].delta.content or "" for c in chunks if c.choices)
     assert content == "Done", f"Stream content mismatch: {content!r}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mock_server", [[
+    MockRoute("/chat/completions", "POST", 401, "{\"error\":{\"code\":\"invalid_api_key\",\"message\":\"Incorrect API key provided.\",\"param\":null,\"type\":\"invalid_request_error\"}}"),
+]], indirect=True)
+async def test_stream_error_401(mock_server: MockServerInfo) -> None:
+    """401 Unauthorized error on stream initiation before any chunks are received"""
+    import json
+    client = LlmClient(api_key="test-key", base_url=mock_server.url, max_retries=0)
+    request = json.loads("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true}")
+    chunks = []
+    async for chunk in client.chat_stream(**request):
+        chunks.append(chunk)
+    assert len(chunks) >= 1, f"Expected at least 1 chunk(s), got {len(chunks)}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mock_server", [[
+    MockRoute(
+        "/chat/completions",
+        "POST",
+        200,
+        stream_chunks=[
+            "{\"choices\":[{\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"function\":{\"name\":\"get_weather\"},\"id\":\"call_1\",\"index\":0,\"type\":\"function\"}]},\"finish_reason\":null,\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+            "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"function\":{\"arguments\":\"{\\\"loc\"},\"index\":0}]},\"finish_reason\":null,\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+            "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"function\":{\"arguments\":\"ation\\\":\\\"NYC\\\"}\"},\"index\":0}]},\"finish_reason\":null,\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+            "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\",\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+        ],
+    ),
+]], indirect=True)
+async def test_stream_with_tool_calls(mock_server: MockServerInfo) -> None:
+    """Streaming chat completion where the assistant responds with a tool call across multiple chunks"""
+    import json
+    client = LlmClient(api_key="test-key", base_url=mock_server.url, max_retries=0)
+    request = json.loads("{\"messages\":[{\"content\":\"What is the weather in NYC?\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true,\"tools\":[{\"function\":{\"description\":\"Get the current weather for a given location\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"location\":{\"description\":\"The city and state, e.g. New York, NY\",\"type\":\"string\"}},\"required\":[\"location\"],\"type\":\"object\"}},\"type\":\"function\"}]}")
+    chunks = []
+    async for chunk in client.chat_stream(**request):
+        chunks.append(chunk)
+    assert len(chunks) >= 1, f"Expected at least 1 chunk(s), got {len(chunks)}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mock_server", [[
+    MockRoute(
+        "/chat/completions",
+        "POST",
+        200,
+        stream_chunks=[
+            "{\"choices\":[{\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000020,\"id\":\"chatcmpl-usage001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+            "{\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000020,\"id\":\"chatcmpl-usage001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+            "{\"choices\":[{\"delta\":{\"content\":\" there!\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000020,\"id\":\"chatcmpl-usage001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+            "{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\",\"index\":0}],\"created\":1711000020,\"id\":\"chatcmpl-usage001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":8,\"prompt_tokens\":10,\"total_tokens\":18}}",
+        ],
+    ),
+]], indirect=True)
+async def test_stream_with_usage(mock_server: MockServerInfo) -> None:
+    """Streaming chat completion that includes a usage summary in the final chunk"""
+    import json
+    client = LlmClient(api_key="test-key", base_url=mock_server.url, max_retries=0)
+    request = json.loads("{\"messages\":[{\"content\":\"Say hi\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true,\"stream_options\":{\"include_usage\":true}}")
+    chunks = []
+    async for chunk in client.chat_stream(**request):
+        chunks.append(chunk)
+    assert len(chunks) >= 2, f"Expected at least 2 chunk(s), got {len(chunks)}"
+    content = "".join(c.choices[0].delta.content or "" for c in chunks if c.choices)
+    assert content == "Hi there!", f"Stream content mismatch: {content!r}"

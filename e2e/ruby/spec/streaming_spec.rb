@@ -39,6 +39,28 @@ RSpec.describe "streaming" do
     server&.stop
   end
 
+  it "empty_stream" do
+    # Streaming chat completion that produces no content chunks before the DONE signal
+    route = E2EHelpers::MockRoute.new(
+      path: "/chat/completions",
+      method: "POST",
+      status: 200,
+      body: 'null',
+      stream_chunks: []
+    )
+    server = E2EHelpers::MockServer.new([route])
+
+    response = post_json(server.url, "/chat/completions", '{"messages":[{"content":"Say nothing","role":"user"}],"model":"gpt-4","stream":true}')
+
+    expect(response.code.to_i).to eq(200)
+
+    chunks = parse_sse_chunks(response.body)
+    expect(chunks.size).to be >= 1
+
+  ensure
+    server&.stop
+  end
+
   it "stream_done_signal" do
     # Verify that the [DONE] sentinel signal properly terminates the stream
     route = E2EHelpers::MockRoute.new(
@@ -67,6 +89,89 @@ RSpec.describe "streaming" do
       parsed.dig("choices", 0, "delta", "content")
     end.join
     expect(content).to eq('Done')
+
+  ensure
+    server&.stop
+  end
+
+  it "stream_error_401" do
+    # 401 Unauthorized error on stream initiation before any chunks are received
+    route = E2EHelpers::MockRoute.new(
+      path: "/chat/completions",
+      method: "POST",
+      status: 401,
+      body: '{"error":{"code":"invalid_api_key","message":"Incorrect API key provided.","param":null,"type":"invalid_request_error"}}',
+      stream_chunks: []
+    )
+    server = E2EHelpers::MockServer.new([route])
+
+    response = post_json(server.url, "/chat/completions", '{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4","stream":true}')
+
+    expect(response.code.to_i).to eq(200)
+
+    chunks = parse_sse_chunks(response.body)
+    expect(chunks.size).to be >= 1
+
+  ensure
+    server&.stop
+  end
+
+  it "stream_with_tool_calls" do
+    # Streaming chat completion where the assistant responds with a tool call across multiple chunks
+    route = E2EHelpers::MockRoute.new(
+      path: "/chat/completions",
+      method: "POST",
+      status: 200,
+      body: 'null',
+      stream_chunks: [
+        '{"choices":[{"delta":{"role":"assistant","tool_calls":[{"function":{"name":"get_weather"},"id":"call_1","index":0,"type":"function"}]},"finish_reason":null,"index":0}],"created":1711000010,"id":"chatcmpl-toolstream001","model":"gpt-4","object":"chat.completion.chunk"}',
+        "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"function\":{\"arguments\":\"{\\\"loc\"},\"index\":0}]},\"finish_reason\":null,\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+        "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"function\":{\"arguments\":\"ation\\\":\\\"NYC\\\"}\"},\"index\":0}]},\"finish_reason\":null,\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+        '{"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}],"created":1711000010,"id":"chatcmpl-toolstream001","model":"gpt-4","object":"chat.completion.chunk"}',
+      ]
+    )
+    server = E2EHelpers::MockServer.new([route])
+
+    response = post_json(server.url, "/chat/completions", '{"messages":[{"content":"What is the weather in NYC?","role":"user"}],"model":"gpt-4","stream":true,"tools":[{"function":{"description":"Get the current weather for a given location","name":"get_weather","parameters":{"properties":{"location":{"description":"The city and state, e.g. New York, NY","type":"string"}},"required":["location"],"type":"object"}},"type":"function"}]}')
+
+    expect(response.code.to_i).to eq(200)
+
+    chunks = parse_sse_chunks(response.body)
+    expect(chunks.size).to be >= 1
+
+  ensure
+    server&.stop
+  end
+
+  it "stream_with_usage" do
+    # Streaming chat completion that includes a usage summary in the final chunk
+    route = E2EHelpers::MockRoute.new(
+      path: "/chat/completions",
+      method: "POST",
+      status: 200,
+      body: 'null',
+      stream_chunks: [
+        '{"choices":[{"delta":{"content":"","role":"assistant"},"finish_reason":null,"index":0}],"created":1711000020,"id":"chatcmpl-usage001","model":"gpt-4","object":"chat.completion.chunk"}',
+        '{"choices":[{"delta":{"content":"Hi"},"finish_reason":null,"index":0}],"created":1711000020,"id":"chatcmpl-usage001","model":"gpt-4","object":"chat.completion.chunk"}',
+        '{"choices":[{"delta":{"content":" there!"},"finish_reason":null,"index":0}],"created":1711000020,"id":"chatcmpl-usage001","model":"gpt-4","object":"chat.completion.chunk"}',
+        '{"choices":[{"delta":{},"finish_reason":"stop","index":0}],"created":1711000020,"id":"chatcmpl-usage001","model":"gpt-4","object":"chat.completion.chunk","usage":{"completion_tokens":8,"prompt_tokens":10,"total_tokens":18}}',
+      ]
+    )
+    server = E2EHelpers::MockServer.new([route])
+
+    response = post_json(server.url, "/chat/completions", '{"messages":[{"content":"Say hi","role":"user"}],"model":"gpt-4","stream":true,"stream_options":{"include_usage":true}}')
+
+    expect(response.code.to_i).to eq(200)
+
+    chunks = parse_sse_chunks(response.body)
+    expect(chunks.size).to be >= 2
+
+    content = chunks.filter_map do |raw|
+      parsed = JSON.parse(raw) rescue nil
+      next unless parsed
+      parsed.dig("choices", 0, "delta", "content")
+    end.join
+    expect(content).to eq('Hi there!')
 
   ensure
     server&.stop

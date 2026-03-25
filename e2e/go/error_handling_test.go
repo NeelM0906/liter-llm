@@ -36,6 +36,156 @@ func TestErrorHandling(t *testing.T) {
 		_ = fmt.Sprintf("") // suppress import
 	})
 
+	t.Run("bad_request_400", func(t *testing.T) {
+		// 400 Bad Request error when a parameter value is invalid
+		server := NewMockServer([]MockRoute{
+			{
+				Path:         "/chat/completions",
+				Method:       "POST",
+				Status:       400,
+				Body:         `{"error":{"message":"Invalid parameter: temperature must be between 0 and 2","type":"invalid_request_error"}}`,
+				StreamChunks: nil,
+			},
+		})
+		defer server.Close()
+
+		reqBody := bytes.NewBufferString("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"temperature\":5.0}")
+		resp, err := http.Post(server.URL+"/chat/completions", "application/json", reqBody)
+		if err != nil {
+			t.Fatalf("http.Post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		AssertTrue(t, "expected error status", resp.StatusCode >= 400)
+		AssertEqual(t, "error status code", 400, resp.StatusCode)
+		_ = fmt.Sprintf("") // suppress import
+	})
+
+	t.Run("content_policy_violation", func(t *testing.T) {
+		// 400 error when a request is rejected due to content policy
+		server := NewMockServer([]MockRoute{
+			{
+				Path:         "/chat/completions",
+				Method:       "POST",
+				Status:       400,
+				Body:         `{"error":{"message":"Your request was rejected as a result of our content_policy","type":"invalid_request_error"}}`,
+				StreamChunks: nil,
+			},
+		})
+		defer server.Close()
+
+		reqBody := bytes.NewBufferString("{\"messages\":[{\"content\":\"Generate harmful content\",\"role\":\"user\"}],\"model\":\"gpt-4\"}")
+		resp, err := http.Post(server.URL+"/chat/completions", "application/json", reqBody)
+		if err != nil {
+			t.Fatalf("http.Post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		AssertTrue(t, "expected error status", resp.StatusCode >= 400)
+		AssertEqual(t, "error status code", 400, resp.StatusCode)
+		_ = fmt.Sprintf("") // suppress import
+	})
+
+	t.Run("context_window_exceeded", func(t *testing.T) {
+		// 400 error when the prompt exceeds the model's maximum context length
+		server := NewMockServer([]MockRoute{
+			{
+				Path:         "/chat/completions",
+				Method:       "POST",
+				Status:       400,
+				Body:         `{"error":{"code":"context_length_exceeded","message":"This model's maximum context length is 8192 tokens","type":"invalid_request_error"}}`,
+				StreamChunks: nil,
+			},
+		})
+		defer server.Close()
+
+		reqBody := bytes.NewBufferString("{\"messages\":[{\"content\":\"Very long prompt that exceeds the context window...\",\"role\":\"user\"}],\"model\":\"gpt-4\"}")
+		resp, err := http.Post(server.URL+"/chat/completions", "application/json", reqBody)
+		if err != nil {
+			t.Fatalf("http.Post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		AssertTrue(t, "expected error status", resp.StatusCode >= 400)
+		AssertEqual(t, "error status code", 400, resp.StatusCode)
+		_ = fmt.Sprintf("") // suppress import
+	})
+
+	t.Run("forbidden_403", func(t *testing.T) {
+		// 403 Forbidden error when the API key does not have access to the requested resource
+		server := NewMockServer([]MockRoute{
+			{
+				Path:         "/chat/completions",
+				Method:       "POST",
+				Status:       403,
+				Body:         `{"error":{"message":"Access denied","type":"access_denied"}}`,
+				StreamChunks: nil,
+			},
+		})
+		defer server.Close()
+
+		reqBody := bytes.NewBufferString("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}")
+		resp, err := http.Post(server.URL+"/chat/completions", "application/json", reqBody)
+		if err != nil {
+			t.Fatalf("http.Post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		AssertTrue(t, "expected error status", resp.StatusCode >= 400)
+		AssertEqual(t, "error status code", 403, resp.StatusCode)
+		_ = fmt.Sprintf("") // suppress import
+	})
+
+	t.Run("gateway_timeout_504", func(t *testing.T) {
+		// 504 Gateway Timeout error when the upstream service times out
+		server := NewMockServer([]MockRoute{
+			{
+				Path:         "/chat/completions",
+				Method:       "POST",
+				Status:       504,
+				Body:         `{"error":{"message":"Gateway timeout","type":"server_error"}}`,
+				StreamChunks: nil,
+			},
+		})
+		defer server.Close()
+
+		reqBody := bytes.NewBufferString("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}")
+		resp, err := http.Post(server.URL+"/chat/completions", "application/json", reqBody)
+		if err != nil {
+			t.Fatalf("http.Post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		AssertTrue(t, "expected error status", resp.StatusCode >= 400)
+		AssertEqual(t, "error status code", 504, resp.StatusCode)
+		_ = fmt.Sprintf("") // suppress import
+	})
+
+	t.Run("not_found_404", func(t *testing.T) {
+		// 404 Not Found error when requesting a model that does not exist
+		server := NewMockServer([]MockRoute{
+			{
+				Path:         "/chat/completions",
+				Method:       "POST",
+				Status:       404,
+				Body:         `{"error":{"message":"Model not found","type":"not_found_error"}}`,
+				StreamChunks: nil,
+			},
+		})
+		defer server.Close()
+
+		reqBody := bytes.NewBufferString("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-99\"}")
+		resp, err := http.Post(server.URL+"/chat/completions", "application/json", reqBody)
+		if err != nil {
+			t.Fatalf("http.Post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		AssertTrue(t, "expected error status", resp.StatusCode >= 400)
+		AssertEqual(t, "error status code", 404, resp.StatusCode)
+		_ = fmt.Sprintf("") // suppress import
+	})
+
 	t.Run("rate_limit_429", func(t *testing.T) {
 		// 429 Too Many Requests error when the rate limit is exceeded
 		server := NewMockServer([]MockRoute{
@@ -83,6 +233,31 @@ func TestErrorHandling(t *testing.T) {
 
 		AssertTrue(t, "expected error status", resp.StatusCode >= 400)
 		AssertEqual(t, "error status code", 500, resp.StatusCode)
+		_ = fmt.Sprintf("") // suppress import
+	})
+
+	t.Run("service_unavailable_502", func(t *testing.T) {
+		// 502 Bad Gateway error when the upstream service is unavailable
+		server := NewMockServer([]MockRoute{
+			{
+				Path:         "/chat/completions",
+				Method:       "POST",
+				Status:       502,
+				Body:         `{"error":{"message":"Bad gateway","type":"server_error"}}`,
+				StreamChunks: nil,
+			},
+		})
+		defer server.Close()
+
+		reqBody := bytes.NewBufferString("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}")
+		resp, err := http.Post(server.URL+"/chat/completions", "application/json", reqBody)
+		if err != nil {
+			t.Fatalf("http.Post failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		AssertTrue(t, "expected error status", resp.StatusCode >= 400)
+		AssertEqual(t, "error status code", 502, resp.StatusCode)
 		_ = fmt.Sprintf("") // suppress import
 	})
 

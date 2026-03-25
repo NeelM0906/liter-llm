@@ -44,6 +44,33 @@ describe("streaming", () => {
     }
   });
 
+  // Streaming chat completion that produces no content chunks before the DONE signal
+  it("empty_stream", async () => {
+    const routes: MockRoute[] = [
+      {
+        path: "/chat/completions",
+        method: "POST",
+        status: 200,
+        body: `null`,
+        streamChunks: [],
+      },
+    ];
+
+    const server = await startMockServer(routes);
+    try {
+      const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url });
+
+      const stream = await client.chatStream(JSON.parse(`{"messages":[{"content":"Say nothing","role":"user"}],"model":"gpt-4","stream":true}`));
+      const chunks: unknown[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+
+    } finally {
+      server.close();
+    }
+  });
+
   // Verify that the [DONE] sentinel signal properly terminates the stream
   it("stream_done_signal", async () => {
     const routes: MockRoute[] = [
@@ -76,6 +103,104 @@ describe("streaming", () => {
         .map((ch: { delta?: { content?: string } }) => ch.delta?.content ?? "")
         .join("");
       expect(content, "Stream content mismatch").toBe("Done");
+    } finally {
+      server.close();
+    }
+  });
+
+  // 401 Unauthorized error on stream initiation before any chunks are received
+  it("stream_error_401", async () => {
+    const routes: MockRoute[] = [
+      {
+        path: "/chat/completions",
+        method: "POST",
+        status: 401,
+        body: `{"error":{"code":"invalid_api_key","message":"Incorrect API key provided.","param":null,"type":"invalid_request_error"}}`,
+        streamChunks: [],
+      },
+    ];
+
+    const server = await startMockServer(routes);
+    try {
+      const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url });
+
+      const stream = await client.chatStream(JSON.parse(`{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4","stream":true}`));
+      const chunks: unknown[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+
+    } finally {
+      server.close();
+    }
+  });
+
+  // Streaming chat completion where the assistant responds with a tool call across multiple chunks
+  it("stream_with_tool_calls", async () => {
+    const routes: MockRoute[] = [
+      {
+        path: "/chat/completions",
+        method: "POST",
+        status: 200,
+        body: `null`,
+        streamChunks: [
+          `{"choices":[{"delta":{"role":"assistant","tool_calls":[{"function":{"name":"get_weather"},"id":"call_1","index":0,"type":"function"}]},"finish_reason":null,"index":0}],"created":1711000010,"id":"chatcmpl-toolstream001","model":"gpt-4","object":"chat.completion.chunk"}`,
+          `{"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\\"loc"},"index":0}]},"finish_reason":null,"index":0}],"created":1711000010,"id":"chatcmpl-toolstream001","model":"gpt-4","object":"chat.completion.chunk"}`,
+          `{"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"ation\\":\\"NYC\\"}"},"index":0}]},"finish_reason":null,"index":0}],"created":1711000010,"id":"chatcmpl-toolstream001","model":"gpt-4","object":"chat.completion.chunk"}`,
+          `{"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}],"created":1711000010,"id":"chatcmpl-toolstream001","model":"gpt-4","object":"chat.completion.chunk"}`,
+        ],
+      },
+    ];
+
+    const server = await startMockServer(routes);
+    try {
+      const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url });
+
+      const stream = await client.chatStream(JSON.parse(`{"messages":[{"content":"What is the weather in NYC?","role":"user"}],"model":"gpt-4","stream":true,"tools":[{"function":{"description":"Get the current weather for a given location","name":"get_weather","parameters":{"properties":{"location":{"description":"The city and state, e.g. New York, NY","type":"string"}},"required":["location"],"type":"object"}},"type":"function"}]}`));
+      const chunks: unknown[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+
+      expect(chunks.length, "Expected at least one stream chunk").toBeGreaterThan(0);
+    } finally {
+      server.close();
+    }
+  });
+
+  // Streaming chat completion that includes a usage summary in the final chunk
+  it("stream_with_usage", async () => {
+    const routes: MockRoute[] = [
+      {
+        path: "/chat/completions",
+        method: "POST",
+        status: 200,
+        body: `null`,
+        streamChunks: [
+          `{"choices":[{"delta":{"content":"","role":"assistant"},"finish_reason":null,"index":0}],"created":1711000020,"id":"chatcmpl-usage001","model":"gpt-4","object":"chat.completion.chunk"}`,
+          `{"choices":[{"delta":{"content":"Hi"},"finish_reason":null,"index":0}],"created":1711000020,"id":"chatcmpl-usage001","model":"gpt-4","object":"chat.completion.chunk"}`,
+          `{"choices":[{"delta":{"content":" there!"},"finish_reason":null,"index":0}],"created":1711000020,"id":"chatcmpl-usage001","model":"gpt-4","object":"chat.completion.chunk"}`,
+          `{"choices":[{"delta":{},"finish_reason":"stop","index":0}],"created":1711000020,"id":"chatcmpl-usage001","model":"gpt-4","object":"chat.completion.chunk","usage":{"completion_tokens":8,"prompt_tokens":10,"total_tokens":18}}`,
+        ],
+      },
+    ];
+
+    const server = await startMockServer(routes);
+    try {
+      const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url });
+
+      const stream = await client.chatStream(JSON.parse(`{"messages":[{"content":"Say hi","role":"user"}],"model":"gpt-4","stream":true,"stream_options":{"include_usage":true}}`));
+      const chunks: unknown[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+
+      expect(chunks.length, "Expected at least 2 chunk(s)").toBeGreaterThanOrEqual(2);
+      const content = chunks
+        .flatMap((c: unknown) => (c as { choices?: { delta?: { content?: string } }[] }).choices ?? [])
+        .map((ch: { delta?: { content?: string } }) => ch.delta?.content ?? "")
+        .join("");
+      expect(content, "Stream content mismatch").toBe("Hi there!");
     } finally {
       server.close();
     }

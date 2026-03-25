@@ -40,6 +40,7 @@ async def test_basic_embed(mock_server: MockServerInfo) -> None:
 
     assert len(response.data) == 1, f"Expected 1 embedding(s), got {len(response.data)}"
     assert len(response.data[0].embedding) == 5, f"Expected 5 dimensions, got {len(response.data[0].embedding)}"
+    assert len(response.data) >= 1, f"Expected at least 1 embedding(s), got {len(response.data)}"
 
 
 @pytest.mark.asyncio
@@ -52,3 +53,4 @@ async def test_basic_list_models(mock_server: MockServerInfo) -> None:
     response = await client.list_models()
 
     assert len(response.data) == 3, f"Expected 3 model(s), got {len(response.data)}"
+    assert len(response.data) >= 1, f"Expected at least 1 model(s), got {len(response.data)}"

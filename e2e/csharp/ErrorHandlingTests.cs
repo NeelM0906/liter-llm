@@ -33,6 +33,150 @@ public sealed class ErrorHandlingTests
         Assert.Equal(401, (int)response.StatusCode);
     }
 
+    /// <summary>400 Bad Request error when a parameter value is invalid</summary>
+    [Fact]
+    public async Task BadRequest400()
+    {
+        var routes = new[]
+        {
+            new MockRoute(
+                Path: "/chat/completions",
+                Method: "POST",
+                Status: 400,
+                Body: "{\"error\":{\"message\":\"Invalid parameter: temperature must be between 0 and 2\",\"type\":\"invalid_request_error\"}}",
+                StreamChunks: Array.Empty<string>()
+            ),
+        };
+
+        using var server = new MockServer(routes);
+        using var http = new HttpClient();
+        http.BaseAddress = new Uri(server.Url);
+
+        var content = new StringContent("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"temperature\":5.0}", System.Text.Encoding.UTF8, "application/json");
+        var response = await http.PostAsync("/chat/completions", content);
+        Assert.Equal(400, (int)response.StatusCode);
+    }
+
+    /// <summary>400 error when a request is rejected due to content policy</summary>
+    [Fact]
+    public async Task ContentPolicyViolation()
+    {
+        var routes = new[]
+        {
+            new MockRoute(
+                Path: "/chat/completions",
+                Method: "POST",
+                Status: 400,
+                Body: "{\"error\":{\"message\":\"Your request was rejected as a result of our content_policy\",\"type\":\"invalid_request_error\"}}",
+                StreamChunks: Array.Empty<string>()
+            ),
+        };
+
+        using var server = new MockServer(routes);
+        using var http = new HttpClient();
+        http.BaseAddress = new Uri(server.Url);
+
+        var content = new StringContent("{\"messages\":[{\"content\":\"Generate harmful content\",\"role\":\"user\"}],\"model\":\"gpt-4\"}", System.Text.Encoding.UTF8, "application/json");
+        var response = await http.PostAsync("/chat/completions", content);
+        Assert.Equal(400, (int)response.StatusCode);
+    }
+
+    /// <summary>400 error when the prompt exceeds the model's maximum context length</summary>
+    [Fact]
+    public async Task ContextWindowExceeded()
+    {
+        var routes = new[]
+        {
+            new MockRoute(
+                Path: "/chat/completions",
+                Method: "POST",
+                Status: 400,
+                Body: "{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"This model's maximum context length is 8192 tokens\",\"type\":\"invalid_request_error\"}}",
+                StreamChunks: Array.Empty<string>()
+            ),
+        };
+
+        using var server = new MockServer(routes);
+        using var http = new HttpClient();
+        http.BaseAddress = new Uri(server.Url);
+
+        var content = new StringContent("{\"messages\":[{\"content\":\"Very long prompt that exceeds the context window...\",\"role\":\"user\"}],\"model\":\"gpt-4\"}", System.Text.Encoding.UTF8, "application/json");
+        var response = await http.PostAsync("/chat/completions", content);
+        Assert.Equal(400, (int)response.StatusCode);
+    }
+
+    /// <summary>403 Forbidden error when the API key does not have access to the requested resource</summary>
+    [Fact]
+    public async Task Forbidden403()
+    {
+        var routes = new[]
+        {
+            new MockRoute(
+                Path: "/chat/completions",
+                Method: "POST",
+                Status: 403,
+                Body: "{\"error\":{\"message\":\"Access denied\",\"type\":\"access_denied\"}}",
+                StreamChunks: Array.Empty<string>()
+            ),
+        };
+
+        using var server = new MockServer(routes);
+        using var http = new HttpClient();
+        http.BaseAddress = new Uri(server.Url);
+
+        var content = new StringContent("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}", System.Text.Encoding.UTF8, "application/json");
+        var response = await http.PostAsync("/chat/completions", content);
+        Assert.Equal(403, (int)response.StatusCode);
+    }
+
+    /// <summary>504 Gateway Timeout error when the upstream service times out</summary>
+    [Fact]
+    public async Task GatewayTimeout504()
+    {
+        var routes = new[]
+        {
+            new MockRoute(
+                Path: "/chat/completions",
+                Method: "POST",
+                Status: 504,
+                Body: "{\"error\":{\"message\":\"Gateway timeout\",\"type\":\"server_error\"}}",
+                StreamChunks: Array.Empty<string>()
+            ),
+        };
+
+        using var server = new MockServer(routes);
+        using var http = new HttpClient();
+        http.BaseAddress = new Uri(server.Url);
+
+        var content = new StringContent("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}", System.Text.Encoding.UTF8, "application/json");
+        var response = await http.PostAsync("/chat/completions", content);
+        Assert.Equal(504, (int)response.StatusCode);
+    }
+
+    /// <summary>404 Not Found error when requesting a model that does not exist</summary>
+    [Fact]
+    public async Task NotFound404()
+    {
+        var routes = new[]
+        {
+            new MockRoute(
+                Path: "/chat/completions",
+                Method: "POST",
+                Status: 404,
+                Body: "{\"error\":{\"message\":\"Model not found\",\"type\":\"not_found_error\"}}",
+                StreamChunks: Array.Empty<string>()
+            ),
+        };
+
+        using var server = new MockServer(routes);
+        using var http = new HttpClient();
+        http.BaseAddress = new Uri(server.Url);
+
+        var content = new StringContent("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-99\"}", System.Text.Encoding.UTF8, "application/json");
+        var response = await http.PostAsync("/chat/completions", content);
+        Assert.Equal(404, (int)response.StatusCode);
+    }
+
     /// <summary>429 Too Many Requests error when the rate limit is exceeded</summary>
     [Fact]
     public async Task RateLimit429()
@@ -79,5 +223,29 @@ public sealed class ErrorHandlingTests
         var content = new StringContent("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}", System.Text.Encoding.UTF8, "application/json");
         var response = await http.PostAsync("/chat/completions", content);
         Assert.Equal(500, (int)response.StatusCode);
+    }
+
+    /// <summary>502 Bad Gateway error when the upstream service is unavailable</summary>
+    [Fact]
+    public async Task ServiceUnavailable502()
+    {
+        var routes = new[]
+        {
+            new MockRoute(
+                Path: "/chat/completions",
+                Method: "POST",
+                Status: 502,
+                Body: "{\"error\":{\"message\":\"Bad gateway\",\"type\":\"server_error\"}}",
+                StreamChunks: Array.Empty<string>()
+            ),
+        };
+
+        using var server = new MockServer(routes);
+        using var http = new HttpClient();
+        http.BaseAddress = new Uri(server.Url);
+
+        var content = new StringContent("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}", System.Text.Encoding.UTF8, "application/json");
+        var response = await http.PostAsync("/chat/completions", content);
+        Assert.Equal(502, (int)response.StatusCode);
     }
 }

@@ -29,6 +29,150 @@ defmodule LiterLmE2E.ErrorHandlingTest do
     assert resp.status == 401
   end
 
+  test "400 Bad Request error when a parameter value is invalid" do
+    routes = [
+      %{
+        path: "/chat/completions",
+        method: "POST",
+        status: 400,
+        body:
+          "{\\\"error\\\":{\\\"message\\\":\\\"Invalid parameter: temperature must be between 0 and 2\\\",\\\"type\\\":\\\"invalid_request_error\\\"}}",
+        stream_chunks: []
+      }
+    ]
+
+    {:ok, base_url} = MockServer.start(routes)
+
+    {:ok, resp} =
+      Req.post(base_url <> "/chat/completions",
+        body:
+          "{\\\"messages\\\":[{\\\"content\\\":\\\"Hello\\\",\\\"role\\\":\\\"user\\\"}],\\\"model\\\":\\\"gpt-4\\\",\\\"temperature\\\":5.0}",
+        headers: [{"content-type", "application/json"}]
+      )
+
+    assert resp.status == 400
+  end
+
+  test "400 error when a request is rejected due to content policy" do
+    routes = [
+      %{
+        path: "/chat/completions",
+        method: "POST",
+        status: 400,
+        body:
+          "{\\\"error\\\":{\\\"message\\\":\\\"Your request was rejected as a result of our content_policy\\\",\\\"type\\\":\\\"invalid_request_error\\\"}}",
+        stream_chunks: []
+      }
+    ]
+
+    {:ok, base_url} = MockServer.start(routes)
+
+    {:ok, resp} =
+      Req.post(base_url <> "/chat/completions",
+        body:
+          "{\\\"messages\\\":[{\\\"content\\\":\\\"Generate harmful content\\\",\\\"role\\\":\\\"user\\\"}],\\\"model\\\":\\\"gpt-4\\\"}",
+        headers: [{"content-type", "application/json"}]
+      )
+
+    assert resp.status == 400
+  end
+
+  test "400 error when the prompt exceeds the model's maximum context length" do
+    routes = [
+      %{
+        path: "/chat/completions",
+        method: "POST",
+        status: 400,
+        body:
+          "{\\\"error\\\":{\\\"code\\\":\\\"context_length_exceeded\\\",\\\"message\\\":\\\"This model's maximum context length is 8192 tokens\\\",\\\"type\\\":\\\"invalid_request_error\\\"}}",
+        stream_chunks: []
+      }
+    ]
+
+    {:ok, base_url} = MockServer.start(routes)
+
+    {:ok, resp} =
+      Req.post(base_url <> "/chat/completions",
+        body:
+          "{\\\"messages\\\":[{\\\"content\\\":\\\"Very long prompt that exceeds the context window...\\\",\\\"role\\\":\\\"user\\\"}],\\\"model\\\":\\\"gpt-4\\\"}",
+        headers: [{"content-type", "application/json"}]
+      )
+
+    assert resp.status == 400
+  end
+
+  test "403 Forbidden error when the API key does not have access to the requested resource" do
+    routes = [
+      %{
+        path: "/chat/completions",
+        method: "POST",
+        status: 403,
+        body:
+          "{\\\"error\\\":{\\\"message\\\":\\\"Access denied\\\",\\\"type\\\":\\\"access_denied\\\"}}",
+        stream_chunks: []
+      }
+    ]
+
+    {:ok, base_url} = MockServer.start(routes)
+
+    {:ok, resp} =
+      Req.post(base_url <> "/chat/completions",
+        body:
+          "{\\\"messages\\\":[{\\\"content\\\":\\\"Hello\\\",\\\"role\\\":\\\"user\\\"}],\\\"model\\\":\\\"gpt-4\\\"}",
+        headers: [{"content-type", "application/json"}]
+      )
+
+    assert resp.status == 403
+  end
+
+  test "504 Gateway Timeout error when the upstream service times out" do
+    routes = [
+      %{
+        path: "/chat/completions",
+        method: "POST",
+        status: 504,
+        body:
+          "{\\\"error\\\":{\\\"message\\\":\\\"Gateway timeout\\\",\\\"type\\\":\\\"server_error\\\"}}",
+        stream_chunks: []
+      }
+    ]
+
+    {:ok, base_url} = MockServer.start(routes)
+
+    {:ok, resp} =
+      Req.post(base_url <> "/chat/completions",
+        body:
+          "{\\\"messages\\\":[{\\\"content\\\":\\\"Hello\\\",\\\"role\\\":\\\"user\\\"}],\\\"model\\\":\\\"gpt-4\\\"}",
+        headers: [{"content-type", "application/json"}]
+      )
+
+    assert resp.status == 504
+  end
+
+  test "404 Not Found error when requesting a model that does not exist" do
+    routes = [
+      %{
+        path: "/chat/completions",
+        method: "POST",
+        status: 404,
+        body:
+          "{\\\"error\\\":{\\\"message\\\":\\\"Model not found\\\",\\\"type\\\":\\\"not_found_error\\\"}}",
+        stream_chunks: []
+      }
+    ]
+
+    {:ok, base_url} = MockServer.start(routes)
+
+    {:ok, resp} =
+      Req.post(base_url <> "/chat/completions",
+        body:
+          "{\\\"messages\\\":[{\\\"content\\\":\\\"Hello\\\",\\\"role\\\":\\\"user\\\"}],\\\"model\\\":\\\"gpt-99\\\"}",
+        headers: [{"content-type", "application/json"}]
+      )
+
+    assert resp.status == 404
+  end
+
   test "429 Too Many Requests error when the rate limit is exceeded" do
     routes = [
       %{
@@ -75,5 +219,29 @@ defmodule LiterLmE2E.ErrorHandlingTest do
       )
 
     assert resp.status == 500
+  end
+
+  test "502 Bad Gateway error when the upstream service is unavailable" do
+    routes = [
+      %{
+        path: "/chat/completions",
+        method: "POST",
+        status: 502,
+        body:
+          "{\\\"error\\\":{\\\"message\\\":\\\"Bad gateway\\\",\\\"type\\\":\\\"server_error\\\"}}",
+        stream_chunks: []
+      }
+    ]
+
+    {:ok, base_url} = MockServer.start(routes)
+
+    {:ok, resp} =
+      Req.post(base_url <> "/chat/completions",
+        body:
+          "{\\\"messages\\\":[{\\\"content\\\":\\\"Hello\\\",\\\"role\\\":\\\"user\\\"}],\\\"model\\\":\\\"gpt-4\\\"}",
+        headers: [{"content-type", "application/json"}]
+      )
+
+    assert resp.status == 502
   end
 end

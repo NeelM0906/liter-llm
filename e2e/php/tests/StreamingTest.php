@@ -38,6 +38,26 @@ final class StreamingTest extends TestCase
         $this->assertGreaterThanOrEqual(3, count($chunks), 'Expected at least 3 chunk(s)');
     }
 
+    /** Streaming chat completion that produces no content chunks before the DONE signal */
+    public function testEmptyStream(): void
+    {
+        $routes = [
+            new MockRoute(
+                path: '/chat/completions',
+                method: 'POST',
+                status: 200,
+                body: 'null',
+                streamChunks: [],
+            ),
+        ];
+
+        $server = new MockServer($routes);
+        $chunks = readSseChunks($server->url . '/chat/completions', 'POST', '{"messages":[{"content":"Say nothing","role":"user"}],"model":"gpt-4","stream":true}');
+        $server->stop();
+
+        $this->assertGreaterThanOrEqual(1, count($chunks), 'Expected at least 1 chunk(s)');
+    }
+
     /** Verify that the [DONE] sentinel signal properly terminates the stream */
     public function testStreamDoneSignal(): void
     {
@@ -60,5 +80,75 @@ final class StreamingTest extends TestCase
         $server->stop();
 
         $this->assertGreaterThanOrEqual(1, count($chunks), 'Expected at least 1 chunk(s)');
+    }
+
+    /** 401 Unauthorized error on stream initiation before any chunks are received */
+    public function testStreamError401(): void
+    {
+        $routes = [
+            new MockRoute(
+                path: '/chat/completions',
+                method: 'POST',
+                status: 401,
+                body: '{"error":{"code":"invalid_api_key","message":"Incorrect API key provided.","param":null,"type":"invalid_request_error"}}',
+                streamChunks: [],
+            ),
+        ];
+
+        $server = new MockServer($routes);
+        $chunks = readSseChunks($server->url . '/chat/completions', 'POST', '{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4","stream":true}');
+        $server->stop();
+
+        $this->assertGreaterThanOrEqual(1, count($chunks), 'Expected at least 1 chunk(s)');
+    }
+
+    /** Streaming chat completion where the assistant responds with a tool call across multiple chunks */
+    public function testStreamWithToolCalls(): void
+    {
+        $routes = [
+            new MockRoute(
+                path: '/chat/completions',
+                method: 'POST',
+                status: 200,
+                body: 'null',
+                streamChunks: [
+                    '{"choices":[{"delta":{"role":"assistant","tool_calls":[{"function":{"name":"get_weather"},"id":"call_1","index":0,"type":"function"}]},"finish_reason":null,"index":0}],"created":1711000010,"id":"chatcmpl-toolstream001","model":"gpt-4","object":"chat.completion.chunk"}',
+                    '{"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\\"loc"},"index":0}]},"finish_reason":null,"index":0}],"created":1711000010,"id":"chatcmpl-toolstream001","model":"gpt-4","object":"chat.completion.chunk"}',
+                    '{"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"ation\\":\\"NYC\\"}"},"index":0}]},"finish_reason":null,"index":0}],"created":1711000010,"id":"chatcmpl-toolstream001","model":"gpt-4","object":"chat.completion.chunk"}',
+                    '{"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}],"created":1711000010,"id":"chatcmpl-toolstream001","model":"gpt-4","object":"chat.completion.chunk"}',
+                ],
+            ),
+        ];
+
+        $server = new MockServer($routes);
+        $chunks = readSseChunks($server->url . '/chat/completions', 'POST', '{"messages":[{"content":"What is the weather in NYC?","role":"user"}],"model":"gpt-4","stream":true,"tools":[{"function":{"description":"Get the current weather for a given location","name":"get_weather","parameters":{"properties":{"location":{"description":"The city and state, e.g. New York, NY","type":"string"}},"required":["location"],"type":"object"}},"type":"function"}]}');
+        $server->stop();
+
+        $this->assertGreaterThanOrEqual(1, count($chunks), 'Expected at least 1 chunk(s)');
+    }
+
+    /** Streaming chat completion that includes a usage summary in the final chunk */
+    public function testStreamWithUsage(): void
+    {
+        $routes = [
+            new MockRoute(
+                path: '/chat/completions',
+                method: 'POST',
+                status: 200,
+                body: 'null',
+                streamChunks: [
+                    '{"choices":[{"delta":{"content":"","role":"assistant"},"finish_reason":null,"index":0}],"created":1711000020,"id":"chatcmpl-usage001","model":"gpt-4","object":"chat.completion.chunk"}',
+                    '{"choices":[{"delta":{"content":"Hi"},"finish_reason":null,"index":0}],"created":1711000020,"id":"chatcmpl-usage001","model":"gpt-4","object":"chat.completion.chunk"}',
+                    '{"choices":[{"delta":{"content":" there!"},"finish_reason":null,"index":0}],"created":1711000020,"id":"chatcmpl-usage001","model":"gpt-4","object":"chat.completion.chunk"}',
+                    '{"choices":[{"delta":{},"finish_reason":"stop","index":0}],"created":1711000020,"id":"chatcmpl-usage001","model":"gpt-4","object":"chat.completion.chunk","usage":{"completion_tokens":8,"prompt_tokens":10,"total_tokens":18}}',
+                ],
+            ),
+        ];
+
+        $server = new MockServer($routes);
+        $chunks = readSseChunks($server->url . '/chat/completions', 'POST', '{"messages":[{"content":"Say hi","role":"user"}],"model":"gpt-4","stream":true,"stream_options":{"include_usage":true}}');
+        $server->stop();
+
+        $this->assertGreaterThanOrEqual(2, count($chunks), 'Expected at least 2 chunk(s)');
     }
 }

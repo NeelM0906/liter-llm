@@ -35,6 +35,151 @@ class ErrorHandlingTest {
     }
   }
 
+  /** 400 Bad Request error when a parameter value is invalid */
+  @Test
+  void badRequest400() throws Exception {
+    try (Helpers.MockServer server =
+        new Helpers.MockServer(
+            List.of(
+                new Helpers.MockRoute(
+                    "/chat/completions",
+                    "POST",
+                    400,
+                    "{\"error\":{\"message\":\"Invalid parameter: temperature must be between 0 and"
+                        + " 2\",\"type\":\"invalid_request_error\"}}")))) {
+
+      HttpResponse<String> resp =
+          Helpers.postJson(
+              server.url,
+              "/chat/completions",
+              "{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"temperature\":5.0}");
+
+      assertEquals(400, resp.statusCode(), "error status code");
+      assertTrue(resp.statusCode() >= 400, "expected error status");
+    }
+  }
+
+  /** 400 error when a request is rejected due to content policy */
+  @Test
+  void contentPolicyViolation() throws Exception {
+    try (Helpers.MockServer server =
+        new Helpers.MockServer(
+            List.of(
+                new Helpers.MockRoute(
+                    "/chat/completions",
+                    "POST",
+                    400,
+                    "{\"error\":{\"message\":\"Your request was rejected as a result of our"
+                        + " content_policy\",\"type\":\"invalid_request_error\"}}")))) {
+
+      HttpResponse<String> resp =
+          Helpers.postJson(
+              server.url,
+              "/chat/completions",
+              "{\"messages\":[{\"content\":\"Generate harmful"
+                  + " content\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+
+      assertEquals(400, resp.statusCode(), "error status code");
+      assertTrue(resp.statusCode() >= 400, "expected error status");
+    }
+  }
+
+  /** 400 error when the prompt exceeds the model's maximum context length */
+  @Test
+  void contextWindowExceeded() throws Exception {
+    try (Helpers.MockServer server =
+        new Helpers.MockServer(
+            List.of(
+                new Helpers.MockRoute(
+                    "/chat/completions",
+                    "POST",
+                    400,
+                    "{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"This model's"
+                        + " maximum context length is 8192"
+                        + " tokens\",\"type\":\"invalid_request_error\"}}")))) {
+
+      HttpResponse<String> resp =
+          Helpers.postJson(
+              server.url,
+              "/chat/completions",
+              "{\"messages\":[{\"content\":\"Very long prompt that exceeds the context"
+                  + " window...\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+
+      assertEquals(400, resp.statusCode(), "error status code");
+      assertTrue(resp.statusCode() >= 400, "expected error status");
+    }
+  }
+
+  /** 403 Forbidden error when the API key does not have access to the requested resource */
+  @Test
+  void forbidden403() throws Exception {
+    try (Helpers.MockServer server =
+        new Helpers.MockServer(
+            List.of(
+                new Helpers.MockRoute(
+                    "/chat/completions",
+                    "POST",
+                    403,
+                    "{\"error\":{\"message\":\"Access denied\",\"type\":\"access_denied\"}}")))) {
+
+      HttpResponse<String> resp =
+          Helpers.postJson(
+              server.url,
+              "/chat/completions",
+              "{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+
+      assertEquals(403, resp.statusCode(), "error status code");
+      assertTrue(resp.statusCode() >= 400, "expected error status");
+    }
+  }
+
+  /** 504 Gateway Timeout error when the upstream service times out */
+  @Test
+  void gatewayTimeout504() throws Exception {
+    try (Helpers.MockServer server =
+        new Helpers.MockServer(
+            List.of(
+                new Helpers.MockRoute(
+                    "/chat/completions",
+                    "POST",
+                    504,
+                    "{\"error\":{\"message\":\"Gateway timeout\",\"type\":\"server_error\"}}")))) {
+
+      HttpResponse<String> resp =
+          Helpers.postJson(
+              server.url,
+              "/chat/completions",
+              "{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+
+      assertEquals(504, resp.statusCode(), "error status code");
+      assertTrue(resp.statusCode() >= 400, "expected error status");
+    }
+  }
+
+  /** 404 Not Found error when requesting a model that does not exist */
+  @Test
+  void notFound404() throws Exception {
+    try (Helpers.MockServer server =
+        new Helpers.MockServer(
+            List.of(
+                new Helpers.MockRoute(
+                    "/chat/completions",
+                    "POST",
+                    404,
+                    "{\"error\":{\"message\":\"Model not"
+                        + " found\",\"type\":\"not_found_error\"}}")))) {
+
+      HttpResponse<String> resp =
+          Helpers.postJson(
+              server.url,
+              "/chat/completions",
+              "{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-99\"}");
+
+      assertEquals(404, resp.statusCode(), "error status code");
+      assertTrue(resp.statusCode() >= 400, "expected error status");
+    }
+  }
+
   /** 429 Too Many Requests error when the rate limit is exceeded */
   @Test
   void rateLimit429() throws Exception {
@@ -82,6 +227,29 @@ class ErrorHandlingTest {
               "{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
 
       assertEquals(500, resp.statusCode(), "error status code");
+      assertTrue(resp.statusCode() >= 400, "expected error status");
+    }
+  }
+
+  /** 502 Bad Gateway error when the upstream service is unavailable */
+  @Test
+  void serviceUnavailable502() throws Exception {
+    try (Helpers.MockServer server =
+        new Helpers.MockServer(
+            List.of(
+                new Helpers.MockRoute(
+                    "/chat/completions",
+                    "POST",
+                    502,
+                    "{\"error\":{\"message\":\"Bad gateway\",\"type\":\"server_error\"}}")))) {
+
+      HttpResponse<String> resp =
+          Helpers.postJson(
+              server.url,
+              "/chat/completions",
+              "{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+
+      assertEquals(502, resp.statusCode(), "error status code");
       assertTrue(resp.statusCode() >= 400, "expected error status");
     }
   }

@@ -185,5 +185,153 @@ defmodule LiterLm.TypesTest do
       assert json =~ "\"first\""
       assert json =~ "\"second\""
     end
+
+    test "chat completion response round-trips from JSON string" do
+      json_str = """
+      {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 1700000000,
+        "model": "gpt-4o",
+        "choices": [{
+          "index": 0,
+          "message": {"role": "assistant", "content": "Hello!"},
+          "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+      }
+      """
+
+      {:ok, decoded} = Jason.decode(json_str)
+
+      assert decoded["id"] == "chatcmpl-test"
+      assert decoded["object"] == "chat.completion"
+      assert decoded["model"] == "gpt-4o"
+      assert length(decoded["choices"]) == 1
+
+      assert decoded["choices"] |> Enum.at(0) |> Map.get("message") |> Map.get("role") ==
+               "assistant"
+
+      assert decoded["usage"]["total_tokens"] == 8
+    end
+
+    test "streaming chunk parses correctly" do
+      chunk_json = """
+      {
+        "id": "chunk-1",
+        "object": "chat.completion.chunk",
+        "created": 1700000000,
+        "model": "gpt-4o",
+        "choices": [{
+          "index": 0,
+          "delta": {"role": "assistant", "content": "streaming text"},
+          "finish_reason": null
+        }]
+      }
+      """
+
+      {:ok, decoded} = Jason.decode(chunk_json)
+
+      assert decoded["id"] == "chunk-1"
+      assert decoded["object"] == "chat.completion.chunk"
+      choice = Enum.at(decoded["choices"], 0)
+      assert choice["delta"]["content"] == "streaming text"
+      assert is_nil(choice["finish_reason"])
+    end
+
+    test "embedding response parses with multiple embeddings" do
+      embedding_json = """
+      {
+        "object": "list",
+        "data": [
+          {"object": "embedding", "embedding": [0.1, 0.2, 0.3], "index": 0},
+          {"object": "embedding", "embedding": [0.4, 0.5, 0.6], "index": 1}
+        ],
+        "model": "text-embedding-3-small",
+        "usage": {"prompt_tokens": 10, "completion_tokens": 0, "total_tokens": 10}
+      }
+      """
+
+      {:ok, decoded} = Jason.decode(embedding_json)
+
+      assert decoded["object"] == "list"
+      assert decoded["model"] == "text-embedding-3-small"
+      data = decoded["data"]
+      assert length(data) == 2
+
+      first_embedding = Enum.at(data, 0)
+      assert first_embedding["index"] == 0
+      assert Enum.at(first_embedding["embedding"], 0) == 0.1
+
+      second_embedding = Enum.at(data, 1)
+      assert second_embedding["index"] == 1
+      assert Enum.at(second_embedding["embedding"], 0) == 0.4
+    end
+
+    test "model list response parses correctly" do
+      models_json = """
+      {
+        "object": "list",
+        "data": [
+          {"id": "gpt-4o", "object": "model", "created": 1712361441, "owned_by": "openai"},
+          {"id": "gpt-3.5-turbo", "object": "model", "created": 1690000000, "owned_by": "openai"}
+        ]
+      }
+      """
+
+      {:ok, decoded} = Jason.decode(models_json)
+
+      assert decoded["object"] == "list"
+      data = decoded["data"]
+      assert length(data) == 2
+
+      first = Enum.at(data, 0)
+      assert first["id"] == "gpt-4o"
+      assert first["object"] == "model"
+      assert first["owned_by"] == "openai"
+
+      second = Enum.at(data, 1)
+      assert second["id"] == "gpt-3.5-turbo"
+    end
+
+    test "tool message with tool_call_id serializes" do
+      tool_msg = %{
+        role: "tool",
+        content: "tool result",
+        tool_call_id: "call-123"
+      }
+
+      {:ok, json} = Jason.encode(tool_msg)
+
+      assert json =~ "\"role\":\"tool\""
+      assert json =~ "\"tool_call_id\":\"call-123\""
+      assert json =~ "tool result"
+    end
+
+    test "developer message serializes" do
+      dev_msg = %{
+        role: "developer",
+        content: "Focus on accuracy."
+      }
+
+      {:ok, json} = Jason.encode(dev_msg)
+
+      assert json =~ "\"role\":\"developer\""
+      assert json =~ "Focus on accuracy."
+    end
+
+    test "function message serializes with name" do
+      func_msg = %{
+        role: "function",
+        content: "Function executed",
+        name: "my_function"
+      }
+
+      {:ok, json} = Jason.encode(func_msg)
+
+      assert json =~ "\"role\":\"function\""
+      assert json =~ "\"name\":\"my_function\""
+      assert json =~ "Function executed"
+    end
   end
 end

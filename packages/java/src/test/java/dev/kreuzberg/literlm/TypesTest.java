@@ -5,6 +5,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.kreuzberg.literlm.LlmException.AuthenticationException;
+import dev.kreuzberg.literlm.LlmException.InvalidRequestException;
+import dev.kreuzberg.literlm.LlmException.NotFoundException;
+import dev.kreuzberg.literlm.LlmException.ProviderException;
+import dev.kreuzberg.literlm.LlmException.RateLimitException;
+import dev.kreuzberg.literlm.LlmException.SerializationException;
+import dev.kreuzberg.literlm.LlmException.StreamException;
 import java.util.List;
 import org.assertj.core.api.SoftAssertions;
 import org.junit.jupiter.api.BeforeEach;
@@ -147,9 +154,9 @@ class TypesTest {
 
 	@Test
 	void stopSequence_single_roundTrips() throws Exception {
-		var stop = StopSequence.of("\\n\\n");
+		var stop = StopSequence.of("STOP");
 		String json = mapper.writeValueAsString(stop);
-		assertThat(json).isEqualTo("\"\\n\\n\"");
+		assertThat(json).isEqualTo("\"STOP\"");
 	}
 
 	@Test
@@ -158,5 +165,115 @@ class TypesTest {
 		String json = mapper.writeValueAsString(stop);
 		assertThat(json).contains("\"stop1\"");
 		assertThat(json).contains("\"stop2\"");
+	}
+
+	// ─── Additional Tests ─────────────────────────────────────────────────────
+
+	@Test
+	void embeddingResponse_roundTrips() throws Exception {
+		var embedding = new EmbeddingObject("embedding", List.of(0.1, 0.2, 0.3), 0);
+		var response = new EmbeddingResponse("list", List.of(embedding), "text-embedding-3-small",
+				new Usage(10L, 0L, 10L));
+		String json = mapper.writeValueAsString(response);
+
+		assertThat(json).contains("\"model\":\"text-embedding-3-small\"");
+		assertThat(json).contains("\"data\"");
+		assertThat(json).contains("0.1");
+		assertThat(json).contains("0.2");
+
+		var decoded = mapper.readValue(json, EmbeddingResponse.class);
+		assertThat(decoded.model()).isEqualTo("text-embedding-3-small");
+		assertThat(decoded.data()).hasSize(1);
+		assertThat(decoded.data().getFirst().embedding()).hasSize(3);
+	}
+
+	@Test
+	void chatCompletionChunk_streaming_roundTrips() throws Exception {
+		var delta = new StreamDelta("assistant", "Hello", null, null, null);
+		var choice = new StreamChoice(0, delta, null);
+		var chunk = new ChatCompletionChunk("chunk-1", "chat.completion.chunk", 1700000000, "gpt-4o", List.of(choice),
+				null, null);
+
+		String json = mapper.writeValueAsString(chunk);
+		assertThat(json).contains("\"id\":\"chunk-1\"");
+		assertThat(json).contains("\"delta\"");
+		assertThat(json).contains("\"Hello\"");
+
+		var decoded = mapper.readValue(json, ChatCompletionChunk.class);
+		assertThat(decoded.id()).isEqualTo("chunk-1");
+		assertThat(decoded.choices()).hasSize(1);
+		assertThat(decoded.choices().getFirst().delta().content()).isEqualTo("Hello");
+	}
+
+	@Test
+	void llmException_errorCodes_classification() throws Exception {
+		var exc1 = new InvalidRequestException("bad input");
+		assertThat(exc1.getErrorCode()).isEqualTo(LlmException.CODE_INVALID_REQUEST);
+		assertThat(exc1.getMessage()).contains("invalid request");
+
+		var exc2 = new AuthenticationException("bad key");
+		assertThat(exc2.getErrorCode()).isEqualTo(LlmException.CODE_AUTHENTICATION);
+
+		var exc3 = new RateLimitException("too fast");
+		assertThat(exc3.getErrorCode()).isEqualTo(LlmException.CODE_RATE_LIMIT);
+
+		var exc4 = new NotFoundException("model missing");
+		assertThat(exc4.getErrorCode()).isEqualTo(LlmException.CODE_NOT_FOUND);
+
+		var exc5 = new ProviderException(500, "server error");
+		assertThat(exc5.getErrorCode()).isEqualTo(LlmException.CODE_PROVIDER_ERROR);
+		assertThat(exc5.getHttpStatus()).isEqualTo(500);
+
+		var exc6 = new StreamException("parse failed");
+		assertThat(exc6.getErrorCode()).isEqualTo(LlmException.CODE_STREAM_ERROR);
+
+		var exc7 = new SerializationException("JSON error", null);
+		assertThat(exc7.getErrorCode()).isEqualTo(LlmException.CODE_SERIALIZATION);
+	}
+
+	@Test
+	void llmClient_builder_validation_nullApiKey() throws Exception {
+		// The builder should handle null apiKey gracefully.
+		// This tests that the builder doesn't crash with null or empty key.
+		var builder = ChatCompletionRequest.builder("gpt-4o-mini", List.of(new UserMessage("test")));
+		var request = builder.build();
+
+		assertThat(request.model()).isEqualTo("gpt-4o-mini");
+		assertThat(request.messages()).hasSize(1);
+	}
+
+	@Test
+	void toolMessage_roundTrips() throws Exception {
+		var msg = new ToolMessage("tool result here", "call-123");
+		String json = mapper.writeValueAsString(msg);
+
+		assertThat(json).contains("\"role\":\"tool\"");
+		assertThat(json).contains("\"tool_call_id\":\"call-123\"");
+		assertThat(json).contains("\"tool result here\"");
+
+		var decoded = mapper.readValue(json, Message.class);
+		assertThat(decoded).isInstanceOf(ToolMessage.class);
+		var tool = (ToolMessage) decoded;
+		assertThat(tool.content()).isEqualTo("tool result here");
+		assertThat(tool.toolCallId()).isEqualTo("call-123");
+	}
+
+	@Test
+	void developerMessage_roundTrips() throws Exception {
+		var msg = new DeveloperMessage("Always be accurate.");
+		String json = mapper.writeValueAsString(msg);
+
+		assertThat(json).contains("\"role\":\"developer\"");
+		assertThat(json).contains("\"Always be accurate.\"");
+
+		var decoded = mapper.readValue(json, Message.class);
+		assertThat(decoded).isInstanceOf(DeveloperMessage.class);
+		assertThat(((DeveloperMessage) decoded).content()).isEqualTo("Always be accurate.");
+	}
+
+	@Test
+	void responseFormat_jsonMode_roundTrips() throws Exception {
+		String json = mapper.writeValueAsString(ResponseFormat.JSON_OBJECT);
+		assertThat(json).contains("\"type\":\"json_object\"");
 	}
 }

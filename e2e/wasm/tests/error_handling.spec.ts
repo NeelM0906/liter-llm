@@ -28,6 +28,120 @@ describe("401 Unauthorized error when API key is invalid or missing", () => {
   });
 });
 
+describe("400 Bad Request error when a parameter value is invalid", () => {
+  let server: MockServer;
+
+  beforeAll(async () => {
+    server = await startMockServer([{ path: "/chat/completions", method: "POST", status: 400, body: "{\"error\":{\"message\":\"Invalid parameter: temperature must be between 0 and 2\",\"type\":\"invalid_request_error\"}}", streamChunks: [] }]);
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it("400 Bad Request error when a parameter value is invalid", async () => {
+    const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url, maxRetries: 0 });
+
+    const req = JSON.parse("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"temperature\":5.0}");
+    await expect(client.chat(req)).rejects.toThrow();
+  });
+});
+
+describe("400 error when a request is rejected due to content policy", () => {
+  let server: MockServer;
+
+  beforeAll(async () => {
+    server = await startMockServer([{ path: "/chat/completions", method: "POST", status: 400, body: "{\"error\":{\"message\":\"Your request was rejected as a result of our content_policy\",\"type\":\"invalid_request_error\"}}", streamChunks: [] }]);
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it("400 error when a request is rejected due to content policy", async () => {
+    const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url, maxRetries: 0 });
+
+    const req = JSON.parse("{\"messages\":[{\"content\":\"Generate harmful content\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+    await expect(client.chat(req)).rejects.toThrow();
+  });
+});
+
+describe("400 error when the prompt exceeds the model's maximum context length", () => {
+  let server: MockServer;
+
+  beforeAll(async () => {
+    server = await startMockServer([{ path: "/chat/completions", method: "POST", status: 400, body: "{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"This model's maximum context length is 8192 tokens\",\"type\":\"invalid_request_error\"}}", streamChunks: [] }]);
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it("400 error when the prompt exceeds the model's maximum context length", async () => {
+    const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url, maxRetries: 0 });
+
+    const req = JSON.parse("{\"messages\":[{\"content\":\"Very long prompt that exceeds the context window...\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+    await expect(client.chat(req)).rejects.toThrow();
+  });
+});
+
+describe("403 Forbidden error when the API key does not have access to the requested resource", () => {
+  let server: MockServer;
+
+  beforeAll(async () => {
+    server = await startMockServer([{ path: "/chat/completions", method: "POST", status: 403, body: "{\"error\":{\"message\":\"Access denied\",\"type\":\"access_denied\"}}", streamChunks: [] }]);
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it("403 Forbidden error when the API key does not have access to the requested resource", async () => {
+    const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url, maxRetries: 0 });
+
+    const req = JSON.parse("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+    await expect(client.chat(req)).rejects.toThrow();
+  });
+});
+
+describe("504 Gateway Timeout error when the upstream service times out", () => {
+  let server: MockServer;
+
+  beforeAll(async () => {
+    server = await startMockServer([{ path: "/chat/completions", method: "POST", status: 504, body: "{\"error\":{\"message\":\"Gateway timeout\",\"type\":\"server_error\"}}", streamChunks: [] }]);
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it("504 Gateway Timeout error when the upstream service times out", async () => {
+    const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url, maxRetries: 0 });
+
+    const req = JSON.parse("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+    await expect(client.chat(req)).rejects.toThrow();
+  });
+});
+
+describe("404 Not Found error when requesting a model that does not exist", () => {
+  let server: MockServer;
+
+  beforeAll(async () => {
+    server = await startMockServer([{ path: "/chat/completions", method: "POST", status: 404, body: "{\"error\":{\"message\":\"Model not found\",\"type\":\"not_found_error\"}}", streamChunks: [] }]);
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it("404 Not Found error when requesting a model that does not exist", async () => {
+    const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url, maxRetries: 0 });
+
+    const req = JSON.parse("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-99\"}");
+    await expect(client.chat(req)).rejects.toThrow();
+  });
+});
+
 describe("429 Too Many Requests error when the rate limit is exceeded", () => {
   let server: MockServer;
 
@@ -59,6 +173,25 @@ describe("500 Internal Server Error from the upstream API", () => {
   });
 
   it("500 Internal Server Error from the upstream API", async () => {
+    const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url, maxRetries: 0 });
+
+    const req = JSON.parse("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+    await expect(client.chat(req)).rejects.toThrow();
+  });
+});
+
+describe("502 Bad Gateway error when the upstream service is unavailable", () => {
+  let server: MockServer;
+
+  beforeAll(async () => {
+    server = await startMockServer([{ path: "/chat/completions", method: "POST", status: 502, body: "{\"error\":{\"message\":\"Bad gateway\",\"type\":\"server_error\"}}", streamChunks: [] }]);
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it("502 Bad Gateway error when the upstream service is unavailable", async () => {
     const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url, maxRetries: 0 });
 
     const req = JSON.parse("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");

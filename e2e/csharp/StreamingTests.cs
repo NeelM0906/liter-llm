@@ -52,6 +52,42 @@ public sealed class StreamingTests
         Assert.True(chunks.Count >= 3, $"Expected at least 3 chunk(s), got {chunks.Count}");
     }
 
+    /// <summary>Streaming chat completion that produces no content chunks before the DONE signal</summary>
+    [Fact]
+    public async Task EmptyStream()
+    {
+        var routes = new[]
+        {
+            new MockRoute(
+                Path: "/chat/completions",
+                Method: "POST",
+                Status: 200,
+                Body: "null",
+                StreamChunks: Array.Empty<string>()
+            ),
+        };
+
+        using var server = new MockServer(routes);
+        using var http = new HttpClient();
+        http.BaseAddress = new Uri(server.Url);
+
+        var content = new StringContent("{\"messages\":[{\"content\":\"Say nothing\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true}", System.Text.Encoding.UTF8, "application/json");
+        var response = await http.PostAsync("/chat/completions", content);
+        response.EnsureSuccessStatusCode();
+
+        var stream = await response.Content.ReadAsStreamAsync();
+        using var reader = new System.IO.StreamReader(stream);
+        var chunks = new List<string>();
+        string? line;
+        while ((line = await reader.ReadLineAsync()) != null)
+        {
+            if (line.StartsWith("data: ") && !line.Contains("[DONE]"))
+                chunks.Add(line[6..]);
+        }
+
+        Assert.True(chunks.Count >= 1, $"Expected at least 1 chunk(s), got {chunks.Count}");
+    }
+
     /// <summary>Verify that the [DONE] sentinel signal properly terminates the stream</summary>
     [Fact]
     public async Task StreamDoneSignal()
@@ -91,5 +127,125 @@ public sealed class StreamingTests
         }
 
         Assert.True(chunks.Count >= 1, $"Expected at least 1 chunk(s), got {chunks.Count}");
+    }
+
+    /// <summary>401 Unauthorized error on stream initiation before any chunks are received</summary>
+    [Fact]
+    public async Task StreamError401()
+    {
+        var routes = new[]
+        {
+            new MockRoute(
+                Path: "/chat/completions",
+                Method: "POST",
+                Status: 401,
+                Body: "{\"error\":{\"code\":\"invalid_api_key\",\"message\":\"Incorrect API key provided.\",\"param\":null,\"type\":\"invalid_request_error\"}}",
+                StreamChunks: Array.Empty<string>()
+            ),
+        };
+
+        using var server = new MockServer(routes);
+        using var http = new HttpClient();
+        http.BaseAddress = new Uri(server.Url);
+
+        var content = new StringContent("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true}", System.Text.Encoding.UTF8, "application/json");
+        var response = await http.PostAsync("/chat/completions", content);
+        response.EnsureSuccessStatusCode();
+
+        var stream = await response.Content.ReadAsStreamAsync();
+        using var reader = new System.IO.StreamReader(stream);
+        var chunks = new List<string>();
+        string? line;
+        while ((line = await reader.ReadLineAsync()) != null)
+        {
+            if (line.StartsWith("data: ") && !line.Contains("[DONE]"))
+                chunks.Add(line[6..]);
+        }
+
+        Assert.True(chunks.Count >= 1, $"Expected at least 1 chunk(s), got {chunks.Count}");
+    }
+
+    /// <summary>Streaming chat completion where the assistant responds with a tool call across multiple chunks</summary>
+    [Fact]
+    public async Task StreamWithToolCalls()
+    {
+        var routes = new[]
+        {
+            new MockRoute(
+                Path: "/chat/completions",
+                Method: "POST",
+                Status: 200,
+                Body: "null",
+                StreamChunks: new[]
+                {
+                    "{\"choices\":[{\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"function\":{\"name\":\"get_weather\"},\"id\":\"call_1\",\"index\":0,\"type\":\"function\"}]},\"finish_reason\":null,\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+                    "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"function\":{\"arguments\":\"{\\\"loc\"},\"index\":0}]},\"finish_reason\":null,\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+                    "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"function\":{\"arguments\":\"ation\\\":\\\"NYC\\\"}\"},\"index\":0}]},\"finish_reason\":null,\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+                    "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\",\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+                }
+            ),
+        };
+
+        using var server = new MockServer(routes);
+        using var http = new HttpClient();
+        http.BaseAddress = new Uri(server.Url);
+
+        var content = new StringContent("{\"messages\":[{\"content\":\"What is the weather in NYC?\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true,\"tools\":[{\"function\":{\"description\":\"Get the current weather for a given location\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"location\":{\"description\":\"The city and state, e.g. New York, NY\",\"type\":\"string\"}},\"required\":[\"location\"],\"type\":\"object\"}},\"type\":\"function\"}]}", System.Text.Encoding.UTF8, "application/json");
+        var response = await http.PostAsync("/chat/completions", content);
+        response.EnsureSuccessStatusCode();
+
+        var stream = await response.Content.ReadAsStreamAsync();
+        using var reader = new System.IO.StreamReader(stream);
+        var chunks = new List<string>();
+        string? line;
+        while ((line = await reader.ReadLineAsync()) != null)
+        {
+            if (line.StartsWith("data: ") && !line.Contains("[DONE]"))
+                chunks.Add(line[6..]);
+        }
+
+        Assert.True(chunks.Count >= 1, $"Expected at least 1 chunk(s), got {chunks.Count}");
+    }
+
+    /// <summary>Streaming chat completion that includes a usage summary in the final chunk</summary>
+    [Fact]
+    public async Task StreamWithUsage()
+    {
+        var routes = new[]
+        {
+            new MockRoute(
+                Path: "/chat/completions",
+                Method: "POST",
+                Status: 200,
+                Body: "null",
+                StreamChunks: new[]
+                {
+                    "{\"choices\":[{\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000020,\"id\":\"chatcmpl-usage001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+                    "{\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000020,\"id\":\"chatcmpl-usage001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+                    "{\"choices\":[{\"delta\":{\"content\":\" there!\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000020,\"id\":\"chatcmpl-usage001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+                    "{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\",\"index\":0}],\"created\":1711000020,\"id\":\"chatcmpl-usage001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":8,\"prompt_tokens\":10,\"total_tokens\":18}}",
+                }
+            ),
+        };
+
+        using var server = new MockServer(routes);
+        using var http = new HttpClient();
+        http.BaseAddress = new Uri(server.Url);
+
+        var content = new StringContent("{\"messages\":[{\"content\":\"Say hi\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true,\"stream_options\":{\"include_usage\":true}}", System.Text.Encoding.UTF8, "application/json");
+        var response = await http.PostAsync("/chat/completions", content);
+        response.EnsureSuccessStatusCode();
+
+        var stream = await response.Content.ReadAsStreamAsync();
+        using var reader = new System.IO.StreamReader(stream);
+        var chunks = new List<string>();
+        string? line;
+        while ((line = await reader.ReadLineAsync()) != null)
+        {
+            if (line.StartsWith("data: ") && !line.Contains("[DONE]"))
+                chunks.Add(line[6..]);
+        }
+
+        Assert.True(chunks.Count >= 2, $"Expected at least 2 chunk(s), got {chunks.Count}");
     }
 }

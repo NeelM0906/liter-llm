@@ -24,6 +24,126 @@ RSpec.describe "error-handling" do
     server&.stop
   end
 
+  it "bad_request_400" do
+    # 400 Bad Request error when a parameter value is invalid
+    route = E2EHelpers::MockRoute.new(
+      path: "/chat/completions",
+      method: "POST",
+      status: 400,
+      body: '{"error":{"message":"Invalid parameter: temperature must be between 0 and 2","type":"invalid_request_error"}}',
+      stream_chunks: []
+    )
+    server = E2EHelpers::MockServer.new([route])
+
+    response = post_json(server.url, "/chat/completions", '{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4","temperature":5.0}')
+
+    expect(response.code.to_i).to eq(400)
+    expect(response.code.to_i).to be >= 400
+
+  ensure
+    server&.stop
+  end
+
+  it "content_policy_violation" do
+    # 400 error when a request is rejected due to content policy
+    route = E2EHelpers::MockRoute.new(
+      path: "/chat/completions",
+      method: "POST",
+      status: 400,
+      body: '{"error":{"message":"Your request was rejected as a result of our content_policy","type":"invalid_request_error"}}',
+      stream_chunks: []
+    )
+    server = E2EHelpers::MockServer.new([route])
+
+    response = post_json(server.url, "/chat/completions", '{"messages":[{"content":"Generate harmful content","role":"user"}],"model":"gpt-4"}')
+
+    expect(response.code.to_i).to eq(400)
+    expect(response.code.to_i).to be >= 400
+
+  ensure
+    server&.stop
+  end
+
+  it "context_window_exceeded" do
+    # 400 error when the prompt exceeds the model's maximum context length
+    route = E2EHelpers::MockRoute.new(
+      path: "/chat/completions",
+      method: "POST",
+      status: 400,
+      body: "{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"This model's maximum context length is 8192 tokens\",\"type\":\"invalid_request_error\"}}",
+      stream_chunks: []
+    )
+    server = E2EHelpers::MockServer.new([route])
+
+    response = post_json(server.url, "/chat/completions", '{"messages":[{"content":"Very long prompt that exceeds the context window...","role":"user"}],"model":"gpt-4"}')
+
+    expect(response.code.to_i).to eq(400)
+    expect(response.code.to_i).to be >= 400
+
+  ensure
+    server&.stop
+  end
+
+  it "forbidden_403" do
+    # 403 Forbidden error when the API key does not have access to the requested resource
+    route = E2EHelpers::MockRoute.new(
+      path: "/chat/completions",
+      method: "POST",
+      status: 403,
+      body: '{"error":{"message":"Access denied","type":"access_denied"}}',
+      stream_chunks: []
+    )
+    server = E2EHelpers::MockServer.new([route])
+
+    response = post_json(server.url, "/chat/completions", '{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4"}')
+
+    expect(response.code.to_i).to eq(403)
+    expect(response.code.to_i).to be >= 400
+
+  ensure
+    server&.stop
+  end
+
+  it "gateway_timeout_504" do
+    # 504 Gateway Timeout error when the upstream service times out
+    route = E2EHelpers::MockRoute.new(
+      path: "/chat/completions",
+      method: "POST",
+      status: 504,
+      body: '{"error":{"message":"Gateway timeout","type":"server_error"}}',
+      stream_chunks: []
+    )
+    server = E2EHelpers::MockServer.new([route])
+
+    response = post_json(server.url, "/chat/completions", '{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4"}')
+
+    expect(response.code.to_i).to eq(504)
+    expect(response.code.to_i).to be >= 400
+
+  ensure
+    server&.stop
+  end
+
+  it "not_found_404" do
+    # 404 Not Found error when requesting a model that does not exist
+    route = E2EHelpers::MockRoute.new(
+      path: "/chat/completions",
+      method: "POST",
+      status: 404,
+      body: '{"error":{"message":"Model not found","type":"not_found_error"}}',
+      stream_chunks: []
+    )
+    server = E2EHelpers::MockServer.new([route])
+
+    response = post_json(server.url, "/chat/completions", '{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-99"}')
+
+    expect(response.code.to_i).to eq(404)
+    expect(response.code.to_i).to be >= 400
+
+  ensure
+    server&.stop
+  end
+
   it "rate_limit_429" do
     # 429 Too Many Requests error when the rate limit is exceeded
     route = E2EHelpers::MockRoute.new(
@@ -58,6 +178,26 @@ RSpec.describe "error-handling" do
     response = post_json(server.url, "/chat/completions", '{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4"}')
 
     expect(response.code.to_i).to eq(500)
+    expect(response.code.to_i).to be >= 400
+
+  ensure
+    server&.stop
+  end
+
+  it "service_unavailable_502" do
+    # 502 Bad Gateway error when the upstream service is unavailable
+    route = E2EHelpers::MockRoute.new(
+      path: "/chat/completions",
+      method: "POST",
+      status: 502,
+      body: '{"error":{"message":"Bad gateway","type":"server_error"}}',
+      stream_chunks: []
+    )
+    server = E2EHelpers::MockServer.new([route])
+
+    response = post_json(server.url, "/chat/completions", '{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4"}')
+
+    expect(response.code.to_i).to eq(502)
     expect(response.code.to_i).to be >= 400
 
   ensure

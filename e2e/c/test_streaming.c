@@ -37,6 +37,37 @@ static void test_basic_stream(void) {
   }
 }
 
+/* Streaming chat completion that produces no content chunks before the DONE
+ * signal */
+static void test_empty_stream(void) {
+  /* Pre-recorded mock response body. */
+  const char *mock_body = "null";
+
+  const char *base_url = getenv("LITER_LM_TEST_BASE_URL");
+  if (base_url != NULL) {
+    /* Live HTTP test against a real server. */
+    char url[1024];
+    snprintf(url, sizeof(url), "%s/chat/completions", base_url);
+
+    char *chunks[256];
+    int n = liter_lm_read_sse(
+        url,
+        "{\"messages\":[{\"content\":\"Say "
+        "nothing\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true}",
+        chunks, 256);
+    if (n < 1) {
+      fprintf(stderr,
+              "FAIL [test_empty_stream]: expected >= 1 chunks, got %d\n", n);
+      abort();
+    }
+    for (int i = 0; i < n; i++)
+      free(chunks[i]);
+  } else {
+    /* Offline: assert against pre-recorded mock body. */
+    (void)mock_body; /* error or stream test — skip offline assertions */
+  }
+}
+
 /* Verify that the [DONE] sentinel signal properly terminates the stream */
 static void test_stream_done_signal(void) {
   /* Pre-recorded mock response body. */
@@ -68,13 +99,128 @@ static void test_stream_done_signal(void) {
   }
 }
 
+/* 401 Unauthorized error on stream initiation before any chunks are received */
+static void test_stream_error_401(void) {
+  /* Pre-recorded mock response body. */
+  const char *mock_body =
+      "{\"error\":{\"code\":\"invalid_api_key\",\"message\":\"Incorrect API "
+      "key provided.\",\"param\":null,\"type\":\"invalid_request_error\"}}";
+
+  const char *base_url = getenv("LITER_LM_TEST_BASE_URL");
+  if (base_url != NULL) {
+    /* Live HTTP test against a real server. */
+    char url[1024];
+    snprintf(url, sizeof(url), "%s/chat/completions", base_url);
+
+    char *chunks[256];
+    int n = liter_lm_read_sse(url,
+                              "{\"messages\":[{\"content\":\"Hello\",\"role\":"
+                              "\"user\"}],\"model\":\"gpt-4\",\"stream\":true}",
+                              chunks, 256);
+    if (n < 1) {
+      fprintf(stderr,
+              "FAIL [test_stream_error_401]: expected >= 1 chunks, got %d\n",
+              n);
+      abort();
+    }
+    for (int i = 0; i < n; i++)
+      free(chunks[i]);
+  } else {
+    /* Offline: assert against pre-recorded mock body. */
+    (void)mock_body; /* error or stream test — skip offline assertions */
+  }
+}
+
+/* Streaming chat completion where the assistant responds with a tool call
+ * across multiple chunks */
+static void test_stream_with_tool_calls(void) {
+  /* Pre-recorded mock response body. */
+  const char *mock_body = "null";
+
+  const char *base_url = getenv("LITER_LM_TEST_BASE_URL");
+  if (base_url != NULL) {
+    /* Live HTTP test against a real server. */
+    char url[1024];
+    snprintf(url, sizeof(url), "%s/chat/completions", base_url);
+
+    char *chunks[256];
+    int n = liter_lm_read_sse(
+        url,
+        "{\"messages\":[{\"content\":\"What is the weather in "
+        "NYC?\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true,"
+        "\"tools\":[{\"function\":{\"description\":\"Get the current weather "
+        "for a given "
+        "location\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{"
+        "\"location\":{\"description\":\"The city and state, e.g. New York, "
+        "NY\",\"type\":\"string\"}},\"required\":[\"location\"],\"type\":"
+        "\"object\"}},\"type\":\"function\"}]}",
+        chunks, 256);
+    if (n < 1) {
+      fprintf(
+          stderr,
+          "FAIL [test_stream_with_tool_calls]: expected >= 1 chunks, got %d\n",
+          n);
+      abort();
+    }
+    for (int i = 0; i < n; i++)
+      free(chunks[i]);
+  } else {
+    /* Offline: assert against pre-recorded mock body. */
+    (void)mock_body; /* error or stream test — skip offline assertions */
+  }
+}
+
+/* Streaming chat completion that includes a usage summary in the final chunk */
+static void test_stream_with_usage(void) {
+  /* Pre-recorded mock response body. */
+  const char *mock_body = "null";
+
+  const char *base_url = getenv("LITER_LM_TEST_BASE_URL");
+  if (base_url != NULL) {
+    /* Live HTTP test against a real server. */
+    char url[1024];
+    snprintf(url, sizeof(url), "%s/chat/completions", base_url);
+
+    char *chunks[256];
+    int n = liter_lm_read_sse(
+        url,
+        "{\"messages\":[{\"content\":\"Say "
+        "hi\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true,\"stream_"
+        "options\":{\"include_usage\":true}}",
+        chunks, 256);
+    if (n < 2) {
+      fprintf(stderr,
+              "FAIL [test_stream_with_usage]: expected >= 2 chunks, got %d\n",
+              n);
+      abort();
+    }
+    for (int i = 0; i < n; i++)
+      free(chunks[i]);
+  } else {
+    /* Offline: assert against pre-recorded mock body. */
+    (void)mock_body; /* error or stream test — skip offline assertions */
+  }
+}
+
 int main(void) {
   test_basic_stream();
   printf("PASS: Streaming chat completion that produces content across "
          "multiple SSE chunks\n");
+  test_empty_stream();
+  printf("PASS: Streaming chat completion that produces no content chunks "
+         "before the DONE signal\n");
   test_stream_done_signal();
   printf("PASS: Verify that the [DONE] sentinel signal properly terminates the "
          "stream\n");
+  test_stream_error_401();
+  printf("PASS: 401 Unauthorized error on stream initiation before any chunks "
+         "are received\n");
+  test_stream_with_tool_calls();
+  printf("PASS: Streaming chat completion where the assistant responds with a "
+         "tool call across multiple chunks\n");
+  test_stream_with_usage();
+  printf("PASS: Streaming chat completion that includes a usage summary in the "
+         "final chunk\n");
   printf("All streaming tests passed.\n");
   return 0;
 }

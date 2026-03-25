@@ -34,6 +34,155 @@ static void test_auth_401(void) {
   }
 }
 
+/* 400 Bad Request error when a parameter value is invalid */
+static void test_bad_request_400(void) {
+  /* Pre-recorded mock response body. */
+  const char *mock_body =
+      "{\"error\":{\"message\":\"Invalid parameter: temperature must be "
+      "between 0 and 2\",\"type\":\"invalid_request_error\"}}";
+
+  const char *base_url = getenv("LITER_LM_TEST_BASE_URL");
+  if (base_url != NULL) {
+    /* Live HTTP test against a real server. */
+    char url[1024];
+    snprintf(url, sizeof(url), "%s/chat/completions", base_url);
+
+    LiterLmResponse *resp = liter_lm_http_post(
+        url, "{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],"
+             "\"model\":\"gpt-4\",\"temperature\":5.0}");
+    assert(resp != NULL);
+    liter_lm_assert_status(resp, 400L, "test_bad_request_400");
+    liter_lm_response_free(resp);
+  } else {
+    /* Offline: assert against pre-recorded mock body. */
+    (void)mock_body; /* error or stream test — skip offline assertions */
+  }
+}
+
+/* 400 error when a request is rejected due to content policy */
+static void test_content_policy_violation(void) {
+  /* Pre-recorded mock response body. */
+  const char *mock_body =
+      "{\"error\":{\"message\":\"Your request was rejected as a result of our "
+      "content_policy\",\"type\":\"invalid_request_error\"}}";
+
+  const char *base_url = getenv("LITER_LM_TEST_BASE_URL");
+  if (base_url != NULL) {
+    /* Live HTTP test against a real server. */
+    char url[1024];
+    snprintf(url, sizeof(url), "%s/chat/completions", base_url);
+
+    LiterLmResponse *resp = liter_lm_http_post(
+        url, "{\"messages\":[{\"content\":\"Generate harmful "
+             "content\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+    assert(resp != NULL);
+    liter_lm_assert_status(resp, 400L, "test_content_policy_violation");
+    liter_lm_response_free(resp);
+  } else {
+    /* Offline: assert against pre-recorded mock body. */
+    (void)mock_body; /* error or stream test — skip offline assertions */
+  }
+}
+
+/* 400 error when the prompt exceeds the model's maximum context length */
+static void test_context_window_exceeded(void) {
+  /* Pre-recorded mock response body. */
+  const char *mock_body =
+      "{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"This "
+      "model's maximum context length is 8192 "
+      "tokens\",\"type\":\"invalid_request_error\"}}";
+
+  const char *base_url = getenv("LITER_LM_TEST_BASE_URL");
+  if (base_url != NULL) {
+    /* Live HTTP test against a real server. */
+    char url[1024];
+    snprintf(url, sizeof(url), "%s/chat/completions", base_url);
+
+    LiterLmResponse *resp = liter_lm_http_post(
+        url, "{\"messages\":[{\"content\":\"Very long prompt that exceeds the "
+             "context window...\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+    assert(resp != NULL);
+    liter_lm_assert_status(resp, 400L, "test_context_window_exceeded");
+    liter_lm_response_free(resp);
+  } else {
+    /* Offline: assert against pre-recorded mock body. */
+    (void)mock_body; /* error or stream test — skip offline assertions */
+  }
+}
+
+/* 403 Forbidden error when the API key does not have access to the requested
+ * resource */
+static void test_forbidden_403(void) {
+  /* Pre-recorded mock response body. */
+  const char *mock_body =
+      "{\"error\":{\"message\":\"Access denied\",\"type\":\"access_denied\"}}";
+
+  const char *base_url = getenv("LITER_LM_TEST_BASE_URL");
+  if (base_url != NULL) {
+    /* Live HTTP test against a real server. */
+    char url[1024];
+    snprintf(url, sizeof(url), "%s/chat/completions", base_url);
+
+    LiterLmResponse *resp =
+        liter_lm_http_post(url, "{\"messages\":[{\"content\":\"Hello\","
+                                "\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+    assert(resp != NULL);
+    liter_lm_assert_status(resp, 403L, "test_forbidden_403");
+    liter_lm_response_free(resp);
+  } else {
+    /* Offline: assert against pre-recorded mock body. */
+    (void)mock_body; /* error or stream test — skip offline assertions */
+  }
+}
+
+/* 504 Gateway Timeout error when the upstream service times out */
+static void test_gateway_timeout_504(void) {
+  /* Pre-recorded mock response body. */
+  const char *mock_body =
+      "{\"error\":{\"message\":\"Gateway timeout\",\"type\":\"server_error\"}}";
+
+  const char *base_url = getenv("LITER_LM_TEST_BASE_URL");
+  if (base_url != NULL) {
+    /* Live HTTP test against a real server. */
+    char url[1024];
+    snprintf(url, sizeof(url), "%s/chat/completions", base_url);
+
+    LiterLmResponse *resp =
+        liter_lm_http_post(url, "{\"messages\":[{\"content\":\"Hello\","
+                                "\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+    assert(resp != NULL);
+    liter_lm_assert_status(resp, 504L, "test_gateway_timeout_504");
+    liter_lm_response_free(resp);
+  } else {
+    /* Offline: assert against pre-recorded mock body. */
+    (void)mock_body; /* error or stream test — skip offline assertions */
+  }
+}
+
+/* 404 Not Found error when requesting a model that does not exist */
+static void test_not_found_404(void) {
+  /* Pre-recorded mock response body. */
+  const char *mock_body = "{\"error\":{\"message\":\"Model not "
+                          "found\",\"type\":\"not_found_error\"}}";
+
+  const char *base_url = getenv("LITER_LM_TEST_BASE_URL");
+  if (base_url != NULL) {
+    /* Live HTTP test against a real server. */
+    char url[1024];
+    snprintf(url, sizeof(url), "%s/chat/completions", base_url);
+
+    LiterLmResponse *resp =
+        liter_lm_http_post(url, "{\"messages\":[{\"content\":\"Hello\","
+                                "\"role\":\"user\"}],\"model\":\"gpt-99\"}");
+    assert(resp != NULL);
+    liter_lm_assert_status(resp, 404L, "test_not_found_404");
+    liter_lm_response_free(resp);
+  } else {
+    /* Offline: assert against pre-recorded mock body. */
+    (void)mock_body; /* error or stream test — skip offline assertions */
+  }
+}
+
 /* 429 Too Many Requests error when the rate limit is exceeded */
 static void test_rate_limit_429(void) {
   /* Pre-recorded mock response body. */
@@ -87,13 +236,56 @@ static void test_server_error_500(void) {
   }
 }
 
+/* 502 Bad Gateway error when the upstream service is unavailable */
+static void test_service_unavailable_502(void) {
+  /* Pre-recorded mock response body. */
+  const char *mock_body =
+      "{\"error\":{\"message\":\"Bad gateway\",\"type\":\"server_error\"}}";
+
+  const char *base_url = getenv("LITER_LM_TEST_BASE_URL");
+  if (base_url != NULL) {
+    /* Live HTTP test against a real server. */
+    char url[1024];
+    snprintf(url, sizeof(url), "%s/chat/completions", base_url);
+
+    LiterLmResponse *resp =
+        liter_lm_http_post(url, "{\"messages\":[{\"content\":\"Hello\","
+                                "\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+    assert(resp != NULL);
+    liter_lm_assert_status(resp, 502L, "test_service_unavailable_502");
+    liter_lm_response_free(resp);
+  } else {
+    /* Offline: assert against pre-recorded mock body. */
+    (void)mock_body; /* error or stream test — skip offline assertions */
+  }
+}
+
 int main(void) {
   test_auth_401();
   printf("PASS: 401 Unauthorized error when API key is invalid or missing\n");
+  test_bad_request_400();
+  printf("PASS: 400 Bad Request error when a parameter value is invalid\n");
+  test_content_policy_violation();
+  printf("PASS: 400 error when a request is rejected due to content policy\n");
+  test_context_window_exceeded();
+  printf("PASS: 400 error when the prompt exceeds the model's maximum context "
+         "length\n");
+  test_forbidden_403();
+  printf("PASS: 403 Forbidden error when the API key does not have access to "
+         "the requested resource\n");
+  test_gateway_timeout_504();
+  printf(
+      "PASS: 504 Gateway Timeout error when the upstream service times out\n");
+  test_not_found_404();
+  printf("PASS: 404 Not Found error when requesting a model that does not "
+         "exist\n");
   test_rate_limit_429();
   printf("PASS: 429 Too Many Requests error when the rate limit is exceeded\n");
   test_server_error_500();
   printf("PASS: 500 Internal Server Error from the upstream API\n");
+  test_service_unavailable_502();
+  printf(
+      "PASS: 502 Bad Gateway error when the upstream service is unavailable\n");
   printf("All error_handling tests passed.\n");
   return 0;
 }

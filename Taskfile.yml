@@ -88,9 +88,23 @@ tasks:
       - task: tools:ai-rulez
 
   build:
-    desc: Build core libraries and language bindings
+    desc: Build core Rust library
     cmds:
       - task: rust:build
+
+  build:all:
+    desc: Build core libraries and ALL language bindings
+    cmds:
+      - task: rust:build
+      - task: python:build
+      - task: node:build
+      - task: go:build
+      - task: java:build
+      - task: csharp:build
+      - task: php:build
+      - task: elixir:build
+      - task: ruby:build
+      - task: wasm:build
 
   build:release:
     desc: Build in release mode (optimized)
@@ -98,9 +112,18 @@ tasks:
       - task: rust:build:release
 
   test:
-    desc: Run Rust tests
+    desc: Run Rust unit and FFI tests
     cmds:
       - task: rust:test
+
+  test:all:
+    desc: Run ALL test suites across all languages
+    cmds:
+      - task: rust:test
+      - task: go:test
+      - task: java:test
+      - task: csharp:test
+      - task: elixir:test
 
   lint:
     desc: Run all linters and formatters via prek (pre-commit framework)
@@ -177,11 +200,22 @@ tasks:
     cmds:
       - task: e2e:generate:all
 
-  # E2E test generation (delegates to e2e workflow)
+  # E2E test generation
   e2e:generate:all:
     desc: Generate E2E tests for all languages from fixtures
     cmds:
-      - task: e2e:generate:all
+      - cargo run -p e2e-generator -- generate --lang all
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  e2e:test:all:
+    desc: Run E2E tests for all languages
+    cmds:
+      - task: rust:e2e:test
+      - task: go:test
+      - task: java:test
+      - task: csharp:test
+      - task: elixir:test
 
   e2e:generate:rust:
     desc: Generate and format Rust E2E tests

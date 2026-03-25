@@ -59,6 +59,27 @@ class StreamingTest {
     }
   }
 
+  /** Streaming chat completion that produces no content chunks before the DONE signal */
+  @Test
+  void emptyStream() throws Exception {
+    try (Helpers.MockServer server =
+        new Helpers.MockServer(
+            List.of(new Helpers.MockRoute("/chat/completions", "POST", 200, "null")))) {
+
+      HttpResponse<String> resp =
+          Helpers.postJson(
+              server.url,
+              "/chat/completions",
+              "{\"messages\":[{\"content\":\"Say"
+                  + " nothing\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true}");
+
+      assertEquals(200, resp.statusCode(), "HTTP status code");
+
+      List<String> chunks = Helpers.parseSseChunks(resp.body());
+      assertTrue(chunks.size() >= 1, "expected at least 1 chunk(s)");
+    }
+  }
+
   /** Verify that the [DONE] sentinel signal properly terminates the stream */
   @Test
   void streamDoneSignal() throws Exception {
@@ -100,6 +121,115 @@ class StreamingTest {
         }
       }
       assertEquals("Done", content.toString(), "stream content");
+    }
+  }
+
+  /** 401 Unauthorized error on stream initiation before any chunks are received */
+  @Test
+  void streamError401() throws Exception {
+    try (Helpers.MockServer server =
+        new Helpers.MockServer(
+            List.of(
+                new Helpers.MockRoute(
+                    "/chat/completions",
+                    "POST",
+                    401,
+                    "{\"error\":{\"code\":\"invalid_api_key\",\"message\":\"Incorrect API key"
+                        + " provided.\",\"param\":null,\"type\":\"invalid_request_error\"}}")))) {
+
+      HttpResponse<String> resp =
+          Helpers.postJson(
+              server.url,
+              "/chat/completions",
+              "{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true}");
+
+      assertEquals(200, resp.statusCode(), "HTTP status code");
+
+      List<String> chunks = Helpers.parseSseChunks(resp.body());
+      assertTrue(chunks.size() >= 1, "expected at least 1 chunk(s)");
+    }
+  }
+
+  /**
+   * Streaming chat completion where the assistant responds with a tool call across multiple chunks
+   */
+  @Test
+  void streamWithToolCalls() throws Exception {
+    try (Helpers.MockServer server =
+        new Helpers.MockServer(
+            List.of(
+                new Helpers.MockRoute(
+                    "/chat/completions",
+                    "POST",
+                    200,
+                    "null",
+                    List.of(
+                        "{\"choices\":[{\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"function\":{\"name\":\"get_weather\"},\"id\":\"call_1\",\"index\":0,\"type\":\"function\"}]},\"finish_reason\":null,\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+                        "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"function\":{\"arguments\":\"{\\\"loc\"},\"index\":0}]},\"finish_reason\":null,\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+                        "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"function\":{\"arguments\":\"ation\\\":\\\"NYC\\\"}\"},\"index\":0}]},\"finish_reason\":null,\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+                        "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\",\"index\":0}],\"created\":1711000010,\"id\":\"chatcmpl-toolstream001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}"))))) {
+
+      HttpResponse<String> resp =
+          Helpers.postJson(
+              server.url,
+              "/chat/completions",
+              "{\"messages\":[{\"content\":\"What is the weather in"
+                  + " NYC?\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true,\"tools\":[{\"function\":{\"description\":\"Get"
+                  + " the current weather for a given"
+                  + " location\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"location\":{\"description\":\"The"
+                  + " city and state, e.g. New York,"
+                  + " NY\",\"type\":\"string\"}},\"required\":[\"location\"],\"type\":\"object\"}},\"type\":\"function\"}]}");
+
+      assertEquals(200, resp.statusCode(), "HTTP status code");
+
+      List<String> chunks = Helpers.parseSseChunks(resp.body());
+      assertTrue(chunks.size() >= 1, "expected at least 1 chunk(s)");
+    }
+  }
+
+  /** Streaming chat completion that includes a usage summary in the final chunk */
+  @Test
+  void streamWithUsage() throws Exception {
+    try (Helpers.MockServer server =
+        new Helpers.MockServer(
+            List.of(
+                new Helpers.MockRoute(
+                    "/chat/completions",
+                    "POST",
+                    200,
+                    "null",
+                    List.of(
+                        "{\"choices\":[{\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000020,\"id\":\"chatcmpl-usage001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+                        "{\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000020,\"id\":\"chatcmpl-usage001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+                        "{\"choices\":[{\"delta\":{\"content\":\""
+                            + " there!\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000020,\"id\":\"chatcmpl-usage001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\"}",
+                        "{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\",\"index\":0}],\"created\":1711000020,\"id\":\"chatcmpl-usage001\",\"model\":\"gpt-4\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":8,\"prompt_tokens\":10,\"total_tokens\":18}}"))))) {
+
+      HttpResponse<String> resp =
+          Helpers.postJson(
+              server.url,
+              "/chat/completions",
+              "{\"messages\":[{\"content\":\"Say"
+                  + " hi\",\"role\":\"user\"}],\"model\":\"gpt-4\",\"stream\":true,\"stream_options\":{\"include_usage\":true}}");
+
+      assertEquals(200, resp.statusCode(), "HTTP status code");
+
+      List<String> chunks = Helpers.parseSseChunks(resp.body());
+      assertTrue(chunks.size() >= 2, "expected at least 2 chunk(s)");
+
+      StringBuilder content = new StringBuilder();
+      for (String rawChunk : chunks) {
+        try {
+          JsonNode chunk = Helpers.MAPPER.readTree(rawChunk);
+          JsonNode deltaContent = chunk.at("/choices/0/delta/content");
+          if (!deltaContent.isMissingNode() && deltaContent.isTextual()) {
+            content.append(deltaContent.asText());
+          }
+        } catch (Exception ignored) {
+          // Non-JSON chunks (role-only deltas etc.) are skipped.
+        }
+      }
+      assertEquals("Hi there!", content.toString(), "stream content");
     }
   }
 }

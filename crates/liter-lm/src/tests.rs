@@ -262,6 +262,304 @@ mod serde_tests {
         assert!(json.contains("json_schema"));
         let _: ResponseFormat = serde_json::from_str(&json).unwrap();
     }
+
+    #[test]
+    fn finish_reason_other_unknown_string() {
+        // Catch-all variant for unknown finish reasons from non-OpenAI providers
+        let json = r#""custom_stop_reason""#;
+        let reason: FinishReason = serde_json::from_str(json).unwrap();
+        assert_eq!(reason, FinishReason::Other);
+    }
+
+    #[test]
+    fn finish_reason_stop_serde() {
+        let reason = FinishReason::Stop;
+        let json = serde_json::to_string(&reason).unwrap();
+        assert_eq!(json, "\"stop\"");
+        let parsed: FinishReason = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, FinishReason::Stop);
+    }
+
+    #[test]
+    fn finish_reason_length_serde() {
+        let reason = FinishReason::Length;
+        let json = serde_json::to_string(&reason).unwrap();
+        assert_eq!(json, "\"length\"");
+        let parsed: FinishReason = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, FinishReason::Length);
+    }
+
+    #[test]
+    fn embedding_format_float_serde() {
+        let fmt = EmbeddingFormat::Float;
+        let json = serde_json::to_string(&fmt).unwrap();
+        assert_eq!(json, "\"float\"");
+        let parsed: EmbeddingFormat = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, EmbeddingFormat::Float);
+    }
+
+    #[test]
+    fn embedding_format_base64_serde() {
+        let fmt = EmbeddingFormat::Base64;
+        let json = serde_json::to_string(&fmt).unwrap();
+        assert_eq!(json, "\"base64\"");
+        let parsed: EmbeddingFormat = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, EmbeddingFormat::Base64);
+    }
+
+    #[test]
+    fn embedding_input_single_string() {
+        let input = EmbeddingInput::Single("hello world".into());
+        let json = serde_json::to_string(&input).unwrap();
+        assert_eq!(json, "\"hello world\"");
+        let parsed: EmbeddingInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, input);
+    }
+
+    #[test]
+    fn embedding_input_multiple_strings() {
+        let input = EmbeddingInput::Multiple(vec!["hello".into(), "world".into(), "test".into()]);
+        let json = serde_json::to_string(&input).unwrap();
+        assert!(json.contains("hello"));
+        assert!(json.contains("world"));
+        let parsed: EmbeddingInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, input);
+    }
+
+    #[test]
+    fn embedding_request_with_format_and_dimensions() {
+        let req = EmbeddingRequest {
+            model: "text-embedding-3-large".into(),
+            input: EmbeddingInput::Single("test".into()),
+            encoding_format: Some(EmbeddingFormat::Base64),
+            dimensions: Some(1024),
+            user: Some("user-123".into()),
+        };
+
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: EmbeddingRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.encoding_format, Some(EmbeddingFormat::Base64));
+        assert_eq!(parsed.dimensions, Some(1024));
+        assert_eq!(parsed.user, Some("user-123".into()));
+    }
+
+    #[test]
+    fn stop_sequence_single_serde() {
+        let stop = StopSequence::Single("\\n".into());
+        let json = serde_json::to_string(&stop).unwrap();
+        assert_eq!(json, "\"\\\\n\"");
+        let parsed: StopSequence = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, stop);
+    }
+
+    #[test]
+    fn stop_sequence_multiple_serde() {
+        let stop = StopSequence::Multiple(vec!["\\n".into(), "\\n\\n".into(), "[END]".into()]);
+        let json = serde_json::to_string(&stop).unwrap();
+        assert!(json.contains("END"));
+        let parsed: StopSequence = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, stop);
+    }
+
+    #[test]
+    fn tool_choice_mode_auto_serde() {
+        let choice = ToolChoice::Mode(ToolChoiceMode::Auto);
+        let json = serde_json::to_string(&choice).unwrap();
+        assert_eq!(json, "\"auto\"");
+        let parsed: ToolChoice = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, choice);
+    }
+
+    #[test]
+    fn tool_choice_mode_required_serde() {
+        let choice = ToolChoice::Mode(ToolChoiceMode::Required);
+        let json = serde_json::to_string(&choice).unwrap();
+        assert_eq!(json, "\"required\"");
+        let parsed: ToolChoice = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, choice);
+    }
+
+    #[test]
+    fn tool_choice_mode_none_serde() {
+        let choice = ToolChoice::Mode(ToolChoiceMode::None);
+        let json = serde_json::to_string(&choice).unwrap();
+        assert_eq!(json, "\"none\"");
+        let parsed: ToolChoice = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, choice);
+    }
+
+    #[test]
+    fn tool_choice_specific_serde() {
+        let choice = ToolChoice::Specific(SpecificToolChoice {
+            choice_type: ToolType::Function,
+            function: SpecificFunction {
+                name: "get_weather".into(),
+            },
+        });
+        let json = serde_json::to_string(&choice).unwrap();
+        assert!(json.contains("get_weather"));
+        let parsed: ToolChoice = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, choice);
+    }
+
+    #[test]
+    fn response_format_text_serde() {
+        let fmt = ResponseFormat::Text;
+        let json = serde_json::to_string(&fmt).unwrap();
+        assert_eq!(json, "{\"type\":\"text\"}");
+        let parsed: ResponseFormat = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, fmt);
+    }
+
+    #[test]
+    fn response_format_json_object_serde() {
+        let fmt = ResponseFormat::JsonObject;
+        let json = serde_json::to_string(&fmt).unwrap();
+        assert_eq!(json, "{\"type\":\"json_object\"}");
+        let parsed: ResponseFormat = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, fmt);
+    }
+
+    #[test]
+    fn chat_completion_request_default_round_trip() {
+        let req = ChatCompletionRequest::default();
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: ChatCompletionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, req);
+        assert!(parsed.model.is_empty());
+        assert!(parsed.messages.is_empty());
+    }
+
+    #[test]
+    fn chat_completion_request_full_fields_partial_eq() {
+        let req1 = ChatCompletionRequest {
+            model: "gpt-4".into(),
+            messages: vec![Message::System(SystemMessage {
+                content: "You are helpful.".into(),
+                name: None,
+            })],
+            temperature: Some(0.7),
+            max_tokens: Some(100),
+            top_p: Some(0.95),
+            n: Some(1),
+            stream: Some(false),
+            stop: Some(StopSequence::Single("\\n".into())),
+            presence_penalty: Some(0.0),
+            frequency_penalty: Some(0.0),
+            logit_bias: None,
+            user: Some("user-1".into()),
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            response_format: None,
+            stream_options: None,
+            seed: None,
+        };
+
+        let json = serde_json::to_string(&req1).unwrap();
+        let req2: ChatCompletionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req1, req2);
+    }
+
+    #[test]
+    fn message_variant_equality() {
+        // Test that Message variants support PartialEq correctly
+        let msg1 = Message::System(SystemMessage {
+            content: "test".into(),
+            name: None,
+        });
+        let msg2 = Message::System(SystemMessage {
+            content: "test".into(),
+            name: None,
+        });
+        assert_eq!(msg1, msg2);
+
+        let msg3 = Message::System(SystemMessage {
+            content: "different".into(),
+            name: None,
+        });
+        assert_ne!(msg1, msg3);
+    }
+
+    #[test]
+    fn message_assistant_round_trip_equality() {
+        let msg = Message::Assistant(AssistantMessage {
+            content: Some("Hello!".into()),
+            name: None,
+            tool_calls: None,
+            refusal: None,
+            function_call: None,
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, parsed);
+    }
+
+    #[test]
+    fn message_user_round_trip_equality() {
+        let msg = Message::User(UserMessage {
+            content: UserContent::Text("What's up?".into()),
+            name: None,
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, parsed);
+    }
+
+    #[test]
+    fn message_tool_round_trip() {
+        let msg = Message::Tool(ToolMessage {
+            content: r#"{"result": "sunny"}"#.into(),
+            tool_call_id: "call_456".into(),
+            name: Some("get_weather".into()),
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        if let Message::Tool(t) = parsed {
+            assert_eq!(t.tool_call_id, "call_456");
+            assert_eq!(t.name.as_deref(), Some("get_weather"));
+        } else {
+            panic!("expected tool message");
+        }
+    }
+
+    #[test]
+    fn user_content_parts_image_detail_low() {
+        let msg = Message::User(UserMessage {
+            content: UserContent::Parts(vec![
+                ContentPart::Text {
+                    text: "Describe this".into(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrl {
+                        url: "https://example.com/img.png".into(),
+                        detail: Some(ImageDetail::Low),
+                    },
+                },
+            ]),
+            name: None,
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, parsed);
+    }
+
+    #[test]
+    fn user_content_parts_image_detail_auto() {
+        let msg = Message::User(UserMessage {
+            content: UserContent::Parts(vec![ContentPart::ImageUrl {
+                image_url: ImageUrl {
+                    url: "https://example.com/img.png".into(),
+                    detail: Some(ImageDetail::Auto),
+                },
+            }]),
+            name: None,
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"detail\":\"auto\""));
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, parsed);
+    }
 }
 
 #[cfg(test)]
@@ -359,6 +657,54 @@ mod provider_tests {
         let header = provider.auth_header("my-secret-key");
         assert!(header.is_none(), "AuthType::None should return no auth header");
     }
+
+    #[test]
+    fn detect_deepseek() {
+        let p = detect_provider("deepseek/deepseek-chat").unwrap();
+        assert_eq!(p.name(), "deepseek");
+    }
+
+    #[test]
+    fn detect_cerebras() {
+        let p = detect_provider("cerebras/llama-3.1-70b").unwrap();
+        assert_eq!(p.name(), "cerebras");
+    }
+
+    #[test]
+    fn detect_openrouter() {
+        let p = detect_provider("openrouter/auto").unwrap();
+        assert_eq!(p.name(), "openrouter");
+    }
+
+    #[test]
+    fn config_driven_unknown_auth_defaults_to_bearer() {
+        let provider = make_provider(AuthType::Unknown);
+        let header = provider.auth_header("my-secret-key");
+        assert!(header.is_some());
+        let (name, value) = header.unwrap();
+        assert_eq!(name, "Authorization");
+        assert!(value.contains("Bearer"));
+    }
+
+    #[test]
+    fn provider_base_url_contract() {
+        let provider = OpenAiProvider;
+        assert_eq!(provider.base_url(), "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn provider_strip_model_prefix_groq() {
+        let p = detect_provider("groq/llama3-70b").unwrap();
+        let stripped = p.strip_model_prefix("groq/llama3-70b");
+        assert_eq!(stripped, "llama3-70b");
+    }
+
+    #[test]
+    fn provider_strip_model_prefix_openai() {
+        let p = OpenAiProvider;
+        let stripped = p.strip_model_prefix("gpt-4");
+        assert_eq!(stripped, "gpt-4"); // OpenAI has no prefix
+    }
 }
 
 #[cfg(test)]
@@ -405,6 +751,59 @@ mod error_tests {
     fn error_from_503() {
         let err = LiterLmError::from_status(503, "Service Unavailable", None);
         assert!(matches!(err, LiterLmError::ServiceUnavailable { .. }));
+    }
+
+    #[test]
+    fn error_from_403_forbidden() {
+        let err = LiterLmError::from_status(403, "Forbidden", None);
+        assert!(matches!(err, LiterLmError::ServerError { .. }));
+    }
+
+    #[test]
+    fn error_from_502_bad_gateway() {
+        let err = LiterLmError::from_status(502, "Bad Gateway", None);
+        assert!(matches!(err, LiterLmError::ServiceUnavailable { .. }));
+    }
+
+    #[test]
+    fn error_from_504_gateway_timeout() {
+        let err = LiterLmError::from_status(504, "Gateway Timeout", None);
+        assert!(matches!(err, LiterLmError::ServiceUnavailable { .. }));
+    }
+
+    #[test]
+    fn error_from_content_policy_filter() {
+        let err = LiterLmError::from_status(
+            400,
+            r#"{"error":{"message":"Request violates content_filter policy","type":"invalid_request_error"}}"#,
+            None,
+        );
+        assert!(matches!(err, LiterLmError::ContentPolicy { .. }));
+    }
+
+    #[test]
+    fn error_from_content_policy_explicit() {
+        let err = LiterLmError::from_status(
+            400,
+            r#"{"error":{"message":"content_policy violation detected","type":"invalid_request_error"}}"#,
+            None,
+        );
+        assert!(matches!(err, LiterLmError::ContentPolicy { .. }));
+    }
+
+    #[test]
+    fn error_message_preservation() {
+        let msg = "Custom error message from provider";
+        let err = LiterLmError::from_status(
+            500,
+            &format!(r#"{{"error":{{"message":"{}","type":"server_error"}}}}"#, msg),
+            None,
+        );
+        if let LiterLmError::ServerError { message } = err {
+            assert_eq!(message, msg);
+        } else {
+            panic!("expected ServerError");
+        }
     }
 }
 
@@ -471,6 +870,46 @@ mod retry_tests {
         assert_eq!(parse_retry_after("30"), Some(Duration::from_secs(30)));
         assert_eq!(parse_retry_after("  5  "), Some(Duration::from_secs(5)));
         assert_eq!(parse_retry_after("not-a-number"), None);
+    }
+
+    #[test]
+    fn retry_on_504() {
+        use std::time::Duration;
+        assert_eq!(should_retry(504, 0, 3, None), Some(Duration::from_secs(1)));
+        assert_eq!(should_retry(504, 1, 3, None), Some(Duration::from_secs(2)));
+        assert_eq!(should_retry(504, 2, 3, None), Some(Duration::from_secs(4)));
+    }
+
+    #[test]
+    fn retry_on_502() {
+        assert!(should_retry(502, 0, 3, None).is_some());
+        assert!(should_retry(502, 1, 3, None).is_some());
+    }
+
+    #[test]
+    fn server_retry_after_capped_at_60s() {
+        use std::time::Duration;
+        let server_delay = Duration::from_secs(120);
+        let delay = should_retry(429, 0, 3, Some(server_delay)).unwrap();
+        // Should be capped at 60 seconds
+        assert_eq!(delay, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn server_retry_after_under_cap() {
+        use std::time::Duration;
+        let server_delay = Duration::from_secs(30);
+        let delay = should_retry(429, 0, 3, Some(server_delay)).unwrap();
+        // Under 60s cap, should use server value
+        assert_eq!(delay, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn exponential_backoff_caps_at_30s() {
+        use std::time::Duration;
+        // Attempt 5 would be 2^5 = 32 seconds, but capped at 30
+        let delay = should_retry(500, 5, 10, None).unwrap();
+        assert_eq!(delay, Duration::from_secs(30));
     }
 }
 

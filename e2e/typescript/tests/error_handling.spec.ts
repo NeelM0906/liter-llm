@@ -34,6 +34,180 @@ describe("error-handling", () => {
     }
   });
 
+  // 400 Bad Request error when a parameter value is invalid
+  it("bad_request_400", async () => {
+    const routes: MockRoute[] = [
+      {
+        path: "/chat/completions",
+        method: "POST",
+        status: 400,
+        body: `{"error":{"message":"Invalid parameter: temperature must be between 0 and 2","type":"invalid_request_error"}}`,
+        streamChunks: [],
+      },
+    ];
+
+    const server = await startMockServer(routes);
+    try {
+      const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url });
+
+      let threw = false;
+      try {
+        await client.chat(JSON.parse(`{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4","temperature":5.0}`));
+      } catch (e) {
+        threw = true;
+        expect((e as Error).message ?? "", "Expected bad request error").toMatch(/bad.?request|400/i);
+      }
+      expect(threw, "Expected client.chat to throw").toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+
+  // 400 error when a request is rejected due to content policy
+  it("content_policy_violation", async () => {
+    const routes: MockRoute[] = [
+      {
+        path: "/chat/completions",
+        method: "POST",
+        status: 400,
+        body: `{"error":{"message":"Your request was rejected as a result of our content_policy","type":"invalid_request_error"}}`,
+        streamChunks: [],
+      },
+    ];
+
+    const server = await startMockServer(routes);
+    try {
+      const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url });
+
+      let threw = false;
+      try {
+        await client.chat(JSON.parse(`{"messages":[{"content":"Generate harmful content","role":"user"}],"model":"gpt-4"}`));
+      } catch (e) {
+        threw = true;
+        expect((e as Error).message ?? "", "Expected bad request error").toMatch(/bad.?request|400/i);
+      }
+      expect(threw, "Expected client.chat to throw").toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+
+  // 400 error when the prompt exceeds the model's maximum context length
+  it("context_window_exceeded", async () => {
+    const routes: MockRoute[] = [
+      {
+        path: "/chat/completions",
+        method: "POST",
+        status: 400,
+        body: `{"error":{"code":"context_length_exceeded","message":"This model's maximum context length is 8192 tokens","type":"invalid_request_error"}}`,
+        streamChunks: [],
+      },
+    ];
+
+    const server = await startMockServer(routes);
+    try {
+      const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url });
+
+      let threw = false;
+      try {
+        await client.chat(JSON.parse(`{"messages":[{"content":"Very long prompt that exceeds the context window...","role":"user"}],"model":"gpt-4"}`));
+      } catch (e) {
+        threw = true;
+        expect((e as Error).message ?? "", "Expected bad request error").toMatch(/bad.?request|400/i);
+      }
+      expect(threw, "Expected client.chat to throw").toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+
+  // 403 Forbidden error when the API key does not have access to the requested resource
+  it("forbidden_403", async () => {
+    const routes: MockRoute[] = [
+      {
+        path: "/chat/completions",
+        method: "POST",
+        status: 403,
+        body: `{"error":{"message":"Access denied","type":"access_denied"}}`,
+        streamChunks: [],
+      },
+    ];
+
+    const server = await startMockServer(routes);
+    try {
+      const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url });
+
+      let threw = false;
+      try {
+        await client.chat(JSON.parse(`{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4"}`));
+      } catch (e) {
+        threw = true;
+        // error thrown as expected
+      }
+      expect(threw, "Expected client.chat to throw").toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+
+  // 504 Gateway Timeout error when the upstream service times out
+  it("gateway_timeout_504", async () => {
+    const routes: MockRoute[] = [
+      {
+        path: "/chat/completions",
+        method: "POST",
+        status: 504,
+        body: `{"error":{"message":"Gateway timeout","type":"server_error"}}`,
+        streamChunks: [],
+      },
+    ];
+
+    const server = await startMockServer(routes);
+    try {
+      const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url });
+
+      let threw = false;
+      try {
+        await client.chat(JSON.parse(`{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4"}`));
+      } catch (e) {
+        threw = true;
+        // error thrown as expected
+      }
+      expect(threw, "Expected client.chat to throw").toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+
+  // 404 Not Found error when requesting a model that does not exist
+  it("not_found_404", async () => {
+    const routes: MockRoute[] = [
+      {
+        path: "/chat/completions",
+        method: "POST",
+        status: 404,
+        body: `{"error":{"message":"Model not found","type":"not_found_error"}}`,
+        streamChunks: [],
+      },
+    ];
+
+    const server = await startMockServer(routes);
+    try {
+      const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url });
+
+      let threw = false;
+      try {
+        await client.chat(JSON.parse(`{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-99"}`));
+      } catch (e) {
+        threw = true;
+        expect((e as Error).message ?? "", "Expected not found error").toMatch(/not.?found|404/i);
+      }
+      expect(threw, "Expected client.chat to throw").toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+
   // 429 Too Many Requests error when the rate limit is exceeded
   it("rate_limit_429", async () => {
     const routes: MockRoute[] = [
@@ -85,6 +259,35 @@ describe("error-handling", () => {
       } catch (e) {
         threw = true;
         expect((e as Error).message ?? "", "Expected server error").toMatch(/server.?error|internal|500/i);
+      }
+      expect(threw, "Expected client.chat to throw").toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+
+  // 502 Bad Gateway error when the upstream service is unavailable
+  it("service_unavailable_502", async () => {
+    const routes: MockRoute[] = [
+      {
+        path: "/chat/completions",
+        method: "POST",
+        status: 502,
+        body: `{"error":{"message":"Bad gateway","type":"server_error"}}`,
+        streamChunks: [],
+      },
+    ];
+
+    const server = await startMockServer(routes);
+    try {
+      const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url });
+
+      let threw = false;
+      try {
+        await client.chat(JSON.parse(`{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4"}`));
+      } catch (e) {
+        threw = true;
+        expect((e as Error).message ?? "", "Expected service unavailable error").toMatch(/unavailable|502|503/i);
       }
       expect(threw, "Expected client.chat to throw").toBe(true);
     } finally {

@@ -32,6 +32,126 @@ final class ErrorHandlingTest extends TestCase
         $this->assertEquals(401, $result['status']);
     }
 
+    /** 400 Bad Request error when a parameter value is invalid */
+    public function testBadRequest400(): void
+    {
+        $routes = [
+            new MockRoute(
+                path: '/chat/completions',
+                method: 'POST',
+                status: 400,
+                body: '{"error":{"message":"Invalid parameter: temperature must be between 0 and 2","type":"invalid_request_error"}}',
+                streamChunks: [],
+            ),
+        ];
+
+        $server = new MockServer($routes);
+        $result = httpRequest($server->url . '/chat/completions', 'POST', '{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4","temperature":5.0}');
+        $server->stop();
+
+        $this->assertEquals(400, $result['status']);
+    }
+
+    /** 400 error when a request is rejected due to content policy */
+    public function testContentPolicyViolation(): void
+    {
+        $routes = [
+            new MockRoute(
+                path: '/chat/completions',
+                method: 'POST',
+                status: 400,
+                body: '{"error":{"message":"Your request was rejected as a result of our content_policy","type":"invalid_request_error"}}',
+                streamChunks: [],
+            ),
+        ];
+
+        $server = new MockServer($routes);
+        $result = httpRequest($server->url . '/chat/completions', 'POST', '{"messages":[{"content":"Generate harmful content","role":"user"}],"model":"gpt-4"}');
+        $server->stop();
+
+        $this->assertEquals(400, $result['status']);
+    }
+
+    /** 400 error when the prompt exceeds the model's maximum context length */
+    public function testContextWindowExceeded(): void
+    {
+        $routes = [
+            new MockRoute(
+                path: '/chat/completions',
+                method: 'POST',
+                status: 400,
+                body: '{"error":{"code":"context_length_exceeded","message":"This model\'s maximum context length is 8192 tokens","type":"invalid_request_error"}}',
+                streamChunks: [],
+            ),
+        ];
+
+        $server = new MockServer($routes);
+        $result = httpRequest($server->url . '/chat/completions', 'POST', '{"messages":[{"content":"Very long prompt that exceeds the context window...","role":"user"}],"model":"gpt-4"}');
+        $server->stop();
+
+        $this->assertEquals(400, $result['status']);
+    }
+
+    /** 403 Forbidden error when the API key does not have access to the requested resource */
+    public function testForbidden403(): void
+    {
+        $routes = [
+            new MockRoute(
+                path: '/chat/completions',
+                method: 'POST',
+                status: 403,
+                body: '{"error":{"message":"Access denied","type":"access_denied"}}',
+                streamChunks: [],
+            ),
+        ];
+
+        $server = new MockServer($routes);
+        $result = httpRequest($server->url . '/chat/completions', 'POST', '{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4"}');
+        $server->stop();
+
+        $this->assertEquals(403, $result['status']);
+    }
+
+    /** 504 Gateway Timeout error when the upstream service times out */
+    public function testGatewayTimeout504(): void
+    {
+        $routes = [
+            new MockRoute(
+                path: '/chat/completions',
+                method: 'POST',
+                status: 504,
+                body: '{"error":{"message":"Gateway timeout","type":"server_error"}}',
+                streamChunks: [],
+            ),
+        ];
+
+        $server = new MockServer($routes);
+        $result = httpRequest($server->url . '/chat/completions', 'POST', '{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4"}');
+        $server->stop();
+
+        $this->assertEquals(504, $result['status']);
+    }
+
+    /** 404 Not Found error when requesting a model that does not exist */
+    public function testNotFound404(): void
+    {
+        $routes = [
+            new MockRoute(
+                path: '/chat/completions',
+                method: 'POST',
+                status: 404,
+                body: '{"error":{"message":"Model not found","type":"not_found_error"}}',
+                streamChunks: [],
+            ),
+        ];
+
+        $server = new MockServer($routes);
+        $result = httpRequest($server->url . '/chat/completions', 'POST', '{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-99"}');
+        $server->stop();
+
+        $this->assertEquals(404, $result['status']);
+    }
+
     /** 429 Too Many Requests error when the rate limit is exceeded */
     public function testRateLimit429(): void
     {
@@ -70,5 +190,25 @@ final class ErrorHandlingTest extends TestCase
         $server->stop();
 
         $this->assertEquals(500, $result['status']);
+    }
+
+    /** 502 Bad Gateway error when the upstream service is unavailable */
+    public function testServiceUnavailable502(): void
+    {
+        $routes = [
+            new MockRoute(
+                path: '/chat/completions',
+                method: 'POST',
+                status: 502,
+                body: '{"error":{"message":"Bad gateway","type":"server_error"}}',
+                streamChunks: [],
+            ),
+        ];
+
+        $server = new MockServer($routes);
+        $result = httpRequest($server->url . '/chat/completions', 'POST', '{"messages":[{"content":"Hello","role":"user"}],"model":"gpt-4"}');
+        $server->stop();
+
+        $this->assertEquals(502, $result['status']);
     }
 }

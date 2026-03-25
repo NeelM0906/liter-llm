@@ -52,6 +52,7 @@ describe("smoke", () => {
 
       const response = await client.embed(JSON.parse(`{"input":"Hello world","model":"text-embedding-3-small"}`));
 
+      expect(response.data.length, "Expected at least 1 embedding(s)").toBeGreaterThanOrEqual(1);
       expect(response.data.length, "Embedding count mismatch").toBe(1);
       expect(response.data[0].embedding.length, "Embedding dimension mismatch").toBe(5);
     } finally {
@@ -77,6 +78,7 @@ describe("smoke", () => {
 
       const response = await client.listModels();
 
+      expect(response.data.length, "Expected at least 1 model(s)").toBeGreaterThanOrEqual(1);
       expect(response.data.length, "Model count mismatch").toBe(3);
     } finally {
       server.close();
