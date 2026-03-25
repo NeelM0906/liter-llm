@@ -42,6 +42,18 @@ typedef struct LiterLmClient LiterLmClient;
 
 
 /**
+ * Callback invoked for each SSE chunk during a streaming chat completion.
+ *
+ * - `chunk_json`: NUL-terminated JSON string for one `ChatCompletionChunk`.
+ *   The pointer is valid only for the duration of the callback invocation.
+ *   The callee must **not** free it.
+ * - `user_data`: The opaque pointer passed to [`literlm_chat_stream`].
+ *
+ * Return value is reserved for future use; callers should return `0`.
+ */
+typedef void (*LiterLmStreamCallback)(const char *chunk_json, void *user_data);
+
+/**
  * Create a new liter-lm client.
  *
  * # Parameters
@@ -100,6 +112,39 @@ LITER_LM_EXPORT void literlm_client_free(LiterLmClient *client);
  * - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
  */
 LITER_LM_EXPORT char *literlm_chat(const LiterLmClient *client, const char *request_json);
+
+/**
+ * Send a streaming chat completion request, invoking a callback for each chunk.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `request_json`: NUL-terminated JSON string conforming to the
+ *   `ChatCompletionRequest` schema.
+ * - `callback`: Function called once per SSE chunk with the JSON-serialised
+ *   `ChatCompletionChunk`.  The `chunk_json` pointer is valid only for the
+ *   duration of each callback invocation and must **not** be freed.
+ * - `user_data`: Opaque pointer forwarded unchanged to each `callback` call.
+ *   May be `NULL`.
+ *
+ * # Return value
+ *
+ * Returns `0` on success (all chunks delivered) or `-1` on failure.
+ * Check [`literlm_last_error`] on failure.
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+ * - `callback` must be a valid function pointer; it is invoked from the calling
+ *   thread with the Tokio runtime blocked.
+ * - `user_data` is forwarded as-is; the caller is responsible for its lifetime.
+ */
+LITER_LM_EXPORT
+int32_t literlm_chat_stream(const LiterLmClient *client,
+                            const char *request_json,
+                            LiterLmStreamCallback callback,
+                            void *user_data);
 
 /**
  * Send an embedding request.

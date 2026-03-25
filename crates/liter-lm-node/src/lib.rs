@@ -161,11 +161,13 @@ impl LlmClient {
         to_js_value(result)
     }
 
-    /// Send a streaming chat completion request.
+    /// Collect all streaming chat completion chunks into an array.
     ///
-    /// This is a pragmatic MVP implementation: the full stream is collected
-    /// server-side and the resolved Promise contains a JS array of chunk
-    /// objects.  A full `AsyncIterable` interface can be layered on top later.
+    /// **Note: This method buffers all chunks before returning.**  The full SSE
+    /// stream is consumed on the Rust side and the resolved Promise contains a
+    /// JS array of chunk objects.  No data is surfaced to JavaScript until the
+    /// stream completes.  For true incremental streaming (chunk-by-chunk as the
+    /// model generates), use the callback-based API (coming soon).
     ///
     /// ```js
     /// const chunks = await client.chatStream({ model: "gpt-4", messages: [...], stream: true });

@@ -181,6 +181,20 @@ impl Provider for OpenAiCompatibleProvider {
 ///
 /// Used for simple providers that are fully described by their JSON config.
 /// Complex providers (AWS Bedrock, Vertex AI, etc.) use dedicated implementations.
+///
+/// # Construction
+///
+/// Construct only via [`ConfigDrivenProvider::new`], which is intentionally
+/// `pub(crate)` — callers outside this crate must go through [`detect_provider`].
+///
+/// # `base_url` contract
+///
+/// [`Provider::base_url`] returns an empty string when the provider config has
+/// no `base_url` entry.  This is safe because [`detect_provider`] guards the
+/// `base_url.is_some()` condition before constructing a `ConfigDrivenProvider`,
+/// so a correctly-routed request will never produce an empty URL.  A manually
+/// constructed instance (hypothetically) would produce a clearly-broken URL
+/// (`/chat/completions`) that fails immediately at the HTTP layer.
 pub struct ConfigDrivenProvider {
     config: ProviderConfig,
     // Resolved base_url — `None` when not configured; request will fail at
@@ -189,7 +203,8 @@ pub struct ConfigDrivenProvider {
 }
 
 impl ConfigDrivenProvider {
-    fn new(config: ProviderConfig) -> Self {
+    #[must_use]
+    pub(crate) fn new(config: ProviderConfig) -> Self {
         let resolved_base_url = config.base_url.clone();
         Self {
             config,

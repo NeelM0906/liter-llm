@@ -10,9 +10,6 @@ description = "WebAssembly bindings for liter-lm universal LM API client"
 keywords = ["wasm", "webassembly", "llm", "api-client", "bindings"]
 categories = ["api-bindings", "wasm"]
 
-[package.metadata.cargo-machete]
-ignored = ["liter-lm"]
-
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
 
@@ -24,7 +21,10 @@ default = []
 
 [dependencies]
 js-sys = "0.3"
-liter-lm = { path = "../liter-lm", default-features = false }
+# TODO: Wire liter-lm core types for request validation in a future version.
+# The WASM binding currently accepts raw JS objects and forwards them via fetch.
+# Re-add liter-lm = { path = "../liter-lm", default-features = false } when
+# request validation through liter-lm types is implemented.
 serde = { workspace = true }
 serde-wasm-bindgen = "0.6"
 serde_json = { workspace = true }

@@ -1306,6 +1306,7 @@ name = "liter-lm-ffi"
 version = "0.1.0"
 dependencies = [
  "cbindgen",
+ "futures-core",
  "liter-lm",
  "serde_json",
  "tokio",
@@ -1351,7 +1352,6 @@ name = "liter-lm-wasm"
 version = "0.1.0"
 dependencies = [
  "js-sys",
- "liter-lm",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",

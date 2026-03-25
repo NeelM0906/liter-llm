@@ -105,8 +105,11 @@ impl DefaultClient {
     }
 
     /// Shared helper: build the URL, resolve auth header strings, strip model
-    /// prefix from the request body, apply provider transform, and return
-    /// everything needed to fire a request.
+    /// prefix from the request body, set the `stream` flag, apply provider
+    /// transform, and return everything needed to fire a request.
+    ///
+    /// `stream` is inserted into the body **before** `transform_request` runs,
+    /// so providers can inspect the final body state in one pass.
     ///
     /// Returns `(url, header_name, header_value, body_value)`.
     fn prepare_request(
@@ -114,6 +117,7 @@ impl DefaultClient {
         serializable: &impl serde::Serialize,
         endpoint_path: &str,
         model: &str,
+        stream: Option<bool>,
     ) -> Result<(String, String, String, serde_json::Value)> {
         let url = format!("{}{}", self.provider.base_url(), endpoint_path);
         let (header_name_cow, header_value_cow) = self.provider.auth_header(self.config.api_key.expose_secret());
@@ -125,6 +129,9 @@ impl DefaultClient {
         let mut body = serde_json::to_value(serializable)?;
         if let Some(obj) = body.as_object_mut() {
             obj.insert("model".into(), serde_json::Value::String(bare_model));
+            if let Some(s) = stream {
+                obj.insert("stream".into(), serde_json::Value::Bool(s));
+            }
         }
         self.provider.transform_request(&mut body)?;
 
@@ -163,16 +170,9 @@ impl LlmClient for DefaultClient {
     fn chat(&self, req: ChatCompletionRequest) -> BoxFuture<'_, ChatCompletionResponse> {
         Box::pin(async move {
             let model = req.model.clone();
-            let (url, header_name, header_value, mut body) =
-                self.prepare_request(&req, self.provider.chat_completions_path(), &model)?;
-
-            // Ensure stream is false for non-streaming requests.
-            if let Some(obj) = body.as_object_mut() {
-                obj.insert("stream".into(), serde_json::Value::Bool(false));
-            }
-            // Re-run transform after inserting stream=false so providers can
-            // inspect the final body state.
-            self.provider.transform_request(&mut body)?;
+            // Pass stream=false so providers can inspect the flag in transform_request.
+            let (url, header_name, header_value, body) =
+                self.prepare_request(&req, self.provider.chat_completions_path(), &model, Some(false))?;
 
             http::request::post_json(
                 &self.http,
@@ -189,15 +189,9 @@ impl LlmClient for DefaultClient {
     fn chat_stream(&self, req: ChatCompletionRequest) -> BoxFuture<'_, BoxStream<'_, ChatCompletionChunk>> {
         Box::pin(async move {
             let model = req.model.clone();
-            let (url, header_name, header_value, mut body) =
-                self.prepare_request(&req, self.provider.chat_completions_path(), &model)?;
-
-            // Force stream = true.
-            if let Some(obj) = body.as_object_mut() {
-                obj.insert("stream".into(), serde_json::Value::Bool(true));
-            }
-            // Re-run transform after inserting stream=true.
-            self.provider.transform_request(&mut body)?;
+            // Pass stream=true so providers can inspect the flag in transform_request.
+            let (url, header_name, header_value, body) =
+                self.prepare_request(&req, self.provider.chat_completions_path(), &model, Some(true))?;
 
             let stream = http::streaming::post_stream(
                 &self.http,
@@ -215,9 +209,9 @@ impl LlmClient for DefaultClient {
     fn embed(&self, req: EmbeddingRequest) -> BoxFuture<'_, EmbeddingResponse> {
         Box::pin(async move {
             let model = req.model.clone();
-            // prepare_request calls transform_request — fix for missing call in embed.
+            // Embeddings have no stream flag; pass None so it is not inserted.
             let (url, header_name, header_value, body) =
-                self.prepare_request(&req, self.provider.embeddings_path(), &model)?;
+                self.prepare_request(&req, self.provider.embeddings_path(), &model, None)?;
 
             http::request::post_json(
                 &self.http,

@@ -168,19 +168,19 @@ impl LlmClient {
 }
 
 impl Drop for LlmClient {
-    /// Best-effort zeroing of the API key on drop.
+    /// Best-effort deallocation of the API key on drop.
     ///
     /// WASM does not have memory-locking primitives (`mlock`), so this is not
     /// a cryptographic guarantee — the runtime or JIT may have already copied
-    /// the key to other locations.  It nonetheless reduces the key's lifetime
-    /// in the heap.
+    /// the key to other locations.  Replacing the string with an empty one and
+    /// releasing its backing allocation reduces the key's lifetime in the heap
+    /// without requiring unsafe code.
     fn drop(&mut self) {
-        // SAFETY: We are zeroing our own `api_key` String's bytes in-place.
-        // After this, `api_key` is still a valid (all-zeros) UTF-8 string
-        // until the String is deallocated at end of scope.
-        for byte in unsafe { self.api_key.as_bytes_mut() } {
-            *byte = 0;
-        }
+        // Replace api_key with an empty String and release its backing allocation.
+        // This is the safe, correct way to clear a String's contents; zeroing
+        // individual bytes via as_bytes_mut() is unsafe and risks creating
+        // invalid UTF-8 if interrupted.
+        drop(std::mem::take(&mut self.api_key));
     }
 }
 
@@ -263,13 +263,21 @@ async fn sleep_ms(ms: u32) {
     let _ = JsFuture::from(promise).await;
 }
 
-/// Returns `true` if the error string suggests a retryable failure (429 / 5xx).
+/// Returns `true` if the error represents a retryable HTTP failure (429 / 5xx).
+///
+/// Error strings from `extract_json_from_response` are always formatted as
+/// `"HTTP {status}: {message}"`.  We parse the numeric status code from that
+/// prefix to avoid false positives from user-visible messages that happen to
+/// contain a matching number substring.
 fn is_retryable_error(error: &JsValue) -> bool {
-    if let Some(s) = error.as_string() {
-        s.contains("429") || s.contains("500") || s.contains("502") || s.contains("503")
-    } else {
-        false
+    if let Some(s) = error.as_string()
+        && let Some(rest) = s.strip_prefix("HTTP ")
+        && let Some((code_str, _)) = rest.split_once(':')
+        && let Ok(status) = code_str.trim().parse::<u16>()
+    {
+        return status == 429 || (500..=599).contains(&status);
     }
+    false
 }
 
 /// Inner POST implementation using `web_sys::Request` / `fetch`.
@@ -397,9 +405,18 @@ mod tests {
 
     #[test]
     fn test_is_retryable_error() {
-        assert!(is_retryable_error(&JsValue::from_str("429")));
-        assert!(is_retryable_error(&JsValue::from_str("HTTP 503")));
-        assert!(!is_retryable_error(&JsValue::from_str("400")));
+        // Retryable: 429 and 5xx in "HTTP NNN: message" format.
+        assert!(is_retryable_error(&JsValue::from_str("HTTP 429: rate limited")));
+        assert!(is_retryable_error(&JsValue::from_str(
+            "HTTP 500: internal server error"
+        )));
+        assert!(is_retryable_error(&JsValue::from_str("HTTP 503: service unavailable")));
+        // Not retryable: 4xx client errors (excluding 429).
+        assert!(!is_retryable_error(&JsValue::from_str("HTTP 400: bad request")));
+        assert!(!is_retryable_error(&JsValue::from_str("HTTP 401: unauthorized")));
+        // Not retryable: bare numbers or unrelated strings do not match.
+        assert!(!is_retryable_error(&JsValue::from_str("429")));
+        assert!(!is_retryable_error(&JsValue::from_str("network error")));
     }
 
     #[test]

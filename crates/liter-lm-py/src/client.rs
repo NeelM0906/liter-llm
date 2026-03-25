@@ -263,8 +263,17 @@ impl PyAsyncChunkIterator {
 
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let rx = Arc::clone(&self.rx);
+        let cancelled = Arc::clone(&self.cancelled);
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            // Check cancellation BEFORE acquiring the lock so that __aexit__
+            // (which sets cancelled=true then locks rx to drop it) can never
+            // deadlock with a concurrent __anext__ that is holding the lock
+            // across an await point.
+            if cancelled.load(Ordering::Acquire) {
+                return Err(PyStopAsyncIteration::new_err(()));
+            }
+
             let mut guard = rx.lock().await;
             let receiver = guard.as_mut().ok_or_else(|| PyStopAsyncIteration::new_err(()))?;
 

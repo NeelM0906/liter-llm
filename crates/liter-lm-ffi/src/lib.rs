@@ -263,6 +263,133 @@ pub unsafe extern "C" fn literlm_chat(client: *const LiterLmClient, request_json
     }
 }
 
+/// Callback invoked for each SSE chunk during a streaming chat completion.
+///
+/// - `chunk_json`: NUL-terminated JSON string for one `ChatCompletionChunk`.
+///   The pointer is valid only for the duration of the callback invocation.
+///   The callee must **not** free it.
+/// - `user_data`: The opaque pointer passed to [`literlm_chat_stream`].
+///
+/// Return value is reserved for future use; callers should return `0`.
+pub type LiterLmStreamCallback = unsafe extern "C" fn(chunk_json: *const c_char, user_data: *mut std::ffi::c_void);
+
+/// Send a streaming chat completion request, invoking a callback for each chunk.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `request_json`: NUL-terminated JSON string conforming to the
+///   `ChatCompletionRequest` schema.
+/// - `callback`: Function called once per SSE chunk with the JSON-serialised
+///   `ChatCompletionChunk`.  The `chunk_json` pointer is valid only for the
+///   duration of each callback invocation and must **not** be freed.
+/// - `user_data`: Opaque pointer forwarded unchanged to each `callback` call.
+///   May be `NULL`.
+///
+/// # Return value
+///
+/// Returns `0` on success (all chunks delivered) or `-1` on failure.
+/// Check [`literlm_last_error`] on failure.
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+/// - `callback` must be a valid function pointer; it is invoked from the calling
+///   thread with the Tokio runtime blocked.
+/// - `user_data` is forwarded as-is; the caller is responsible for its lifetime.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_chat_stream(
+    client: *const LiterLmClient,
+    request_json: *const c_char,
+    callback: LiterLmStreamCallback,
+    user_data: *mut std::ffi::c_void,
+) -> i32 {
+    clear_last_error();
+
+    if client.is_null() {
+        set_last_error("literlm_chat_stream: client must not be NULL".into());
+        return -1;
+    }
+    if request_json.is_null() {
+        set_last_error("literlm_chat_stream: request_json must not be NULL".into());
+        return -1;
+    }
+
+    // SAFETY: caller guarantees `client` and `request_json` are non-null and valid.
+    let client_ref = unsafe { &(*client).inner };
+
+    let json_str = match unsafe { CStr::from_ptr(request_json) }.to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(format!("literlm_chat_stream: request_json is not valid UTF-8: {e}"));
+            return -1;
+        }
+    };
+
+    let request = match serde_json::from_str(json_str) {
+        Ok(r) => r,
+        Err(e) => {
+            set_last_error(format!("literlm_chat_stream: failed to parse request JSON: {e}"));
+            return -1;
+        }
+    };
+
+    let rt = match runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            set_last_error(format!("literlm_chat_stream: {e}"));
+            return -1;
+        }
+    };
+
+    // Block on obtaining the stream, then iterate every chunk synchronously,
+    // invoking the callback for each one.  C FFI callers cannot model async
+    // iterators natively, so a blocking callback pattern is the correct API.
+    let result = rt.block_on(async {
+        use futures_core::Stream;
+        use std::pin::Pin;
+
+        let mut stream = match client_ref.chat_stream(request).await {
+            Ok(s) => s,
+            Err(e) => return Err(format!("literlm_chat_stream: failed to open stream: {e}")),
+        };
+
+        loop {
+            let next = std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)).await;
+            match next {
+                None => break,
+                Some(Err(e)) => return Err(format!("literlm_chat_stream: stream error: {e}")),
+                Some(Ok(chunk)) => {
+                    let chunk_json = match serde_json::to_string(&chunk) {
+                        Ok(s) => s,
+                        Err(e) => return Err(format!("literlm_chat_stream: failed to serialise chunk: {e}")),
+                    };
+                    match CString::new(chunk_json) {
+                        Ok(c_str) => {
+                            // SAFETY: `callback` is a valid function pointer supplied
+                            // by the caller.  `c_str.as_ptr()` is valid for this block
+                            // scope and must not be stored or freed by the callee.
+                            // `user_data` is forwarded as-is; ownership stays with the caller.
+                            unsafe { callback(c_str.as_ptr(), user_data) };
+                        }
+                        Err(e) => return Err(format!("literlm_chat_stream: chunk JSON contained NUL byte: {e}")),
+                    }
+                }
+            }
+        }
+        Ok(())
+    });
+
+    match result {
+        Ok(()) => 0,
+        Err(e) => {
+            set_last_error(e);
+            -1
+        }
+    }
+}
+
 /// Send an embedding request.
 ///
 /// # Parameters
