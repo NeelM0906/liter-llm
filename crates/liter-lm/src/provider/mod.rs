@@ -219,19 +219,16 @@ pub trait Provider: Send + Sync {
     }
 
     /// Path for the files management endpoint (e.g. POST /files, GET /files/{id}).
-    #[allow(dead_code)] // reserved for Files API implementation
     fn files_path(&self) -> &str {
         "/files"
     }
 
     /// Path for the batches management endpoint (e.g. POST /batches, GET /batches/{id}).
-    #[allow(dead_code)] // reserved for Batch API implementation
     fn batches_path(&self) -> &str {
         "/batches"
     }
 
     /// Path for the responses endpoint (e.g. POST /responses).
-    #[allow(dead_code)] // reserved for Responses API implementation
     fn responses_path(&self) -> &str {
         "/responses"
     }

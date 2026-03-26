@@ -2,8 +2,9 @@ use std::borrow::Cow;
 
 use serde_json::Value;
 
-use crate::error::Result;
+use crate::error::{LiterLmError, Result};
 use crate::provider::{Provider, unix_timestamp_secs};
+use crate::types::{ChatCompletionChunk, FinishReason, StreamChoice, StreamDelta, StreamFunctionCall, StreamToolCall};
 
 /// Cohere provider (Command model family).
 ///
@@ -58,6 +59,191 @@ impl Provider for CohereProvider {
         Ok(())
     }
 
+    /// Parse a Cohere v2 streaming SSE event into a `ChatCompletionChunk`.
+    ///
+    /// Cohere v2 streaming events use a `type` field to distinguish event kinds:
+    /// - `stream-start`: beginning of stream, emit role = assistant
+    /// - `content-delta`: text content token, extract from `delta.text`
+    /// - `tool-call-start`: start of a tool call with id and function name
+    /// - `tool-call-delta`: partial tool call arguments
+    /// - `tool-call-end`: end of a tool call (skipped)
+    /// - `stream-end`: end of stream with finish reason and usage
+    fn parse_stream_event(&self, event_data: &str) -> Result<Option<ChatCompletionChunk>> {
+        let v: Value = serde_json::from_str(event_data).map_err(|e| LiterLmError::Streaming {
+            message: format!("failed to parse Cohere SSE event: {e}"),
+        })?;
+
+        let event_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+        match event_type {
+            "stream-start" => {
+                let id = v.get("generation_id").and_then(|g| g.as_str()).unwrap_or("").to_owned();
+
+                Ok(Some(ChatCompletionChunk {
+                    id,
+                    object: "chat.completion.chunk".to_owned(),
+                    created: unix_timestamp_secs(),
+                    model: String::new(),
+                    choices: vec![StreamChoice {
+                        index: 0,
+                        delta: StreamDelta {
+                            role: Some("assistant".to_owned()),
+                            content: None,
+                            tool_calls: None,
+                            function_call: None,
+                            refusal: None,
+                        },
+                        finish_reason: None,
+                    }],
+                    usage: None,
+                    system_fingerprint: None,
+                    service_tier: None,
+                }))
+            }
+
+            "content-delta" => {
+                let text = v
+                    .pointer("/delta/text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_owned();
+
+                Ok(Some(ChatCompletionChunk {
+                    id: String::new(),
+                    object: "chat.completion.chunk".to_owned(),
+                    created: unix_timestamp_secs(),
+                    model: String::new(),
+                    choices: vec![StreamChoice {
+                        index: 0,
+                        delta: StreamDelta {
+                            role: None,
+                            content: Some(text),
+                            tool_calls: None,
+                            function_call: None,
+                            refusal: None,
+                        },
+                        finish_reason: None,
+                    }],
+                    usage: None,
+                    system_fingerprint: None,
+                    service_tier: None,
+                }))
+            }
+
+            "tool-call-start" => {
+                let index = v.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as u32;
+                let tool_id = v.pointer("/delta/id").and_then(|i| i.as_str()).unwrap_or("").to_owned();
+                let tool_name = v
+                    .pointer("/delta/function/name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .to_owned();
+
+                Ok(Some(ChatCompletionChunk {
+                    id: String::new(),
+                    object: "chat.completion.chunk".to_owned(),
+                    created: unix_timestamp_secs(),
+                    model: String::new(),
+                    choices: vec![StreamChoice {
+                        index: 0,
+                        delta: StreamDelta {
+                            role: None,
+                            content: None,
+                            tool_calls: Some(vec![StreamToolCall {
+                                index,
+                                id: Some(tool_id),
+                                call_type: Some(crate::types::ToolType::Function),
+                                function: Some(StreamFunctionCall {
+                                    name: Some(tool_name),
+                                    arguments: None,
+                                }),
+                            }]),
+                            function_call: None,
+                            refusal: None,
+                        },
+                        finish_reason: None,
+                    }],
+                    usage: None,
+                    system_fingerprint: None,
+                    service_tier: None,
+                }))
+            }
+
+            "tool-call-delta" => {
+                let index = v.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as u32;
+                let arguments = v
+                    .pointer("/delta/function/arguments")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("")
+                    .to_owned();
+
+                Ok(Some(ChatCompletionChunk {
+                    id: String::new(),
+                    object: "chat.completion.chunk".to_owned(),
+                    created: unix_timestamp_secs(),
+                    model: String::new(),
+                    choices: vec![StreamChoice {
+                        index: 0,
+                        delta: StreamDelta {
+                            role: None,
+                            content: None,
+                            tool_calls: Some(vec![StreamToolCall {
+                                index,
+                                id: None,
+                                call_type: None,
+                                function: Some(StreamFunctionCall {
+                                    name: None,
+                                    arguments: Some(arguments),
+                                }),
+                            }]),
+                            function_call: None,
+                            refusal: None,
+                        },
+                        finish_reason: None,
+                    }],
+                    usage: None,
+                    system_fingerprint: None,
+                    service_tier: None,
+                }))
+            }
+
+            "tool-call-end" => Ok(None),
+
+            "stream-end" => {
+                let finish_reason = v
+                    .get("finish_reason")
+                    .and_then(|r| r.as_str())
+                    .map(map_cohere_finish_reason);
+
+                let usage = extract_cohere_stream_usage(&v);
+
+                Ok(Some(ChatCompletionChunk {
+                    id: String::new(),
+                    object: "chat.completion.chunk".to_owned(),
+                    created: unix_timestamp_secs(),
+                    model: String::new(),
+                    choices: vec![StreamChoice {
+                        index: 0,
+                        delta: StreamDelta {
+                            role: None,
+                            content: None,
+                            tool_calls: None,
+                            function_call: None,
+                            refusal: None,
+                        },
+                        finish_reason,
+                    }],
+                    usage,
+                    system_fingerprint: None,
+                    service_tier: None,
+                }))
+            }
+
+            // Unknown event types are silently skipped.
+            _ => Ok(None),
+        }
+    }
+
     /// Normalize Cohere response format to OpenAI-compatible JSON.
     ///
     /// - Maps finish reasons: `COMPLETE` -> `stop`, `MAX_TOKENS` -> `length`,
@@ -104,6 +290,31 @@ impl Provider for CohereProvider {
 
         Ok(())
     }
+}
+
+/// Map Cohere finish reason strings to OpenAI-compatible `FinishReason`.
+fn map_cohere_finish_reason(reason: &str) -> FinishReason {
+    match reason {
+        "COMPLETE" => FinishReason::Stop,
+        "MAX_TOKENS" => FinishReason::Length,
+        "TOOL_CALL" => FinishReason::ToolCalls,
+        _ => FinishReason::Other,
+    }
+}
+
+/// Extract usage from a Cohere `stream-end` event.
+///
+/// Cohere v2 reports usage under `usage.billed_units.{input_tokens, output_tokens}`.
+fn extract_cohere_stream_usage(v: &Value) -> Option<crate::types::Usage> {
+    let billed = v.pointer("/usage/billed_units")?;
+    let input = billed.get("input_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
+    let output = billed.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
+
+    Some(crate::types::Usage {
+        prompt_tokens: input,
+        completion_tokens: output,
+        total_tokens: input + output,
+    })
 }
 
 #[cfg(test)]
@@ -235,5 +446,209 @@ mod tests {
 
         // Existing usage should not be overwritten.
         assert_eq!(body["usage"]["prompt_tokens"], 5);
+    }
+
+    // ── Streaming SSE parser tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_parse_stream_event_stream_start() {
+        let provider = CohereProvider;
+        let event = r#"{"type":"stream-start","generation_id":"gen-123"}"#;
+        let chunk = provider
+            .parse_stream_event(event)
+            .expect("should parse")
+            .expect("should return Some");
+
+        assert_eq!(chunk.id, "gen-123");
+        assert_eq!(chunk.object, "chat.completion.chunk");
+        assert_eq!(chunk.choices.len(), 1);
+        assert_eq!(chunk.choices[0].delta.role.as_deref(), Some("assistant"));
+        assert!(chunk.choices[0].delta.content.is_none());
+        assert!(chunk.choices[0].finish_reason.is_none());
+        assert!(chunk.usage.is_none());
+    }
+
+    #[test]
+    fn test_parse_stream_event_content_delta() {
+        let provider = CohereProvider;
+        let event = r#"{"type":"content-delta","delta":{"type":"text_content","text":"Hello"}}"#;
+        let chunk = provider
+            .parse_stream_event(event)
+            .expect("should parse")
+            .expect("should return Some");
+
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("Hello"));
+        assert!(chunk.choices[0].delta.role.is_none());
+        assert!(chunk.choices[0].delta.tool_calls.is_none());
+    }
+
+    #[test]
+    fn test_parse_stream_event_content_delta_whitespace() {
+        let provider = CohereProvider;
+        let event = r#"{"type":"content-delta","delta":{"type":"text_content","text":" world"}}"#;
+        let chunk = provider
+            .parse_stream_event(event)
+            .expect("should parse")
+            .expect("should return Some");
+
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some(" world"));
+    }
+
+    #[test]
+    fn test_parse_stream_event_tool_call_start() {
+        let provider = CohereProvider;
+        let event = r#"{"type":"tool-call-start","index":0,"delta":{"type":"tool_call","id":"tc-001","function":{"name":"get_weather","arguments":""}}}"#;
+        let chunk = provider
+            .parse_stream_event(event)
+            .expect("should parse")
+            .expect("should return Some");
+
+        let tool_calls = chunk.choices[0]
+            .delta
+            .tool_calls
+            .as_ref()
+            .expect("should have tool_calls");
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].index, 0);
+        assert_eq!(tool_calls[0].id.as_deref(), Some("tc-001"));
+        let func = tool_calls[0].function.as_ref().expect("should have function");
+        assert_eq!(func.name.as_deref(), Some("get_weather"));
+        assert!(func.arguments.is_none());
+    }
+
+    #[test]
+    fn test_parse_stream_event_tool_call_delta() {
+        let provider = CohereProvider;
+        let event =
+            r#"{"type":"tool-call-delta","index":0,"delta":{"type":"tool_call","function":{"arguments":"{\"ci"}}}"#;
+        let chunk = provider
+            .parse_stream_event(event)
+            .expect("should parse")
+            .expect("should return Some");
+
+        let tool_calls = chunk.choices[0]
+            .delta
+            .tool_calls
+            .as_ref()
+            .expect("should have tool_calls");
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].index, 0);
+        assert!(tool_calls[0].id.is_none());
+        let func = tool_calls[0].function.as_ref().expect("should have function");
+        assert!(func.name.is_none());
+        assert_eq!(func.arguments.as_deref(), Some("{\"ci"));
+    }
+
+    #[test]
+    fn test_parse_stream_event_tool_call_end_returns_none() {
+        let provider = CohereProvider;
+        let event = r#"{"type":"tool-call-end","index":0}"#;
+        let result = provider.parse_stream_event(event).expect("should parse");
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_stream_event_stream_end_complete() {
+        let provider = CohereProvider;
+        let event = r#"{"type":"stream-end","finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":10,"output_tokens":5}}}"#;
+        let chunk = provider
+            .parse_stream_event(event)
+            .expect("should parse")
+            .expect("should return Some");
+
+        assert_eq!(chunk.choices[0].finish_reason, Some(FinishReason::Stop));
+        let usage = chunk.usage.as_ref().expect("should have usage");
+        assert_eq!(usage.prompt_tokens, 10);
+        assert_eq!(usage.completion_tokens, 5);
+        assert_eq!(usage.total_tokens, 15);
+    }
+
+    #[test]
+    fn test_parse_stream_event_stream_end_max_tokens() {
+        let provider = CohereProvider;
+        let event = r#"{"type":"stream-end","finish_reason":"MAX_TOKENS","usage":{"billed_units":{"input_tokens":20,"output_tokens":100}}}"#;
+        let chunk = provider
+            .parse_stream_event(event)
+            .expect("should parse")
+            .expect("should return Some");
+
+        assert_eq!(chunk.choices[0].finish_reason, Some(FinishReason::Length));
+        let usage = chunk.usage.as_ref().expect("should have usage");
+        assert_eq!(usage.prompt_tokens, 20);
+        assert_eq!(usage.completion_tokens, 100);
+        assert_eq!(usage.total_tokens, 120);
+    }
+
+    #[test]
+    fn test_parse_stream_event_stream_end_tool_call() {
+        let provider = CohereProvider;
+        let event = r#"{"type":"stream-end","finish_reason":"TOOL_CALL","usage":{"billed_units":{"input_tokens":15,"output_tokens":8}}}"#;
+        let chunk = provider
+            .parse_stream_event(event)
+            .expect("should parse")
+            .expect("should return Some");
+
+        assert_eq!(chunk.choices[0].finish_reason, Some(FinishReason::ToolCalls));
+    }
+
+    #[test]
+    fn test_parse_stream_event_stream_end_no_usage() {
+        let provider = CohereProvider;
+        let event = r#"{"type":"stream-end","finish_reason":"COMPLETE"}"#;
+        let chunk = provider
+            .parse_stream_event(event)
+            .expect("should parse")
+            .expect("should return Some");
+
+        assert_eq!(chunk.choices[0].finish_reason, Some(FinishReason::Stop));
+        assert!(chunk.usage.is_none());
+    }
+
+    #[test]
+    fn test_parse_stream_event_unknown_type_returns_none() {
+        let provider = CohereProvider;
+        let event = r#"{"type":"debug","message":"some debug info"}"#;
+        let result = provider.parse_stream_event(event).expect("should parse");
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_stream_event_invalid_json_returns_err() {
+        let provider = CohereProvider;
+        let result = provider.parse_stream_event("not valid json");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_stream_event_tool_call_start_index_1() {
+        let provider = CohereProvider;
+        let event = r#"{"type":"tool-call-start","index":1,"delta":{"type":"tool_call","id":"tc-002","function":{"name":"search","arguments":""}}}"#;
+        let chunk = provider
+            .parse_stream_event(event)
+            .expect("should parse")
+            .expect("should return Some");
+
+        let tool_calls = chunk.choices[0]
+            .delta
+            .tool_calls
+            .as_ref()
+            .expect("should have tool_calls");
+        assert_eq!(tool_calls[0].index, 1);
+        assert_eq!(tool_calls[0].id.as_deref(), Some("tc-002"));
+    }
+
+    #[test]
+    fn test_parse_stream_event_stream_end_unknown_finish_reason() {
+        let provider = CohereProvider;
+        let event = r#"{"type":"stream-end","finish_reason":"ERROR"}"#;
+        let chunk = provider
+            .parse_stream_event(event)
+            .expect("should parse")
+            .expect("should return Some");
+
+        assert_eq!(chunk.choices[0].finish_reason, Some(FinishReason::Other));
     }
 }

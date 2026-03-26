@@ -30,6 +30,7 @@ clap = { version = "4", features = ["derive"] }
 dashmap = "6"
 futures-core = "0.3"
 jsonschema = "0.45"
+jsonwebtoken = { version = "10", default-features = false, features = ["use_pem"] }
 
 # Binding frameworks
 magnus = "0.8"
@@ -43,7 +44,7 @@ pyo3 = { version = "0.28", features = ["abi3-py310"] }
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
 rb-sys = "0.9"
 # Async / HTTP
-reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "multipart"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "multipart", "form"] }
 rustler = "0.37"
 
 # Security

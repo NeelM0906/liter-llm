@@ -238,7 +238,6 @@ pub async fn get_json<T: DeserializeOwned>(
 ///
 /// `auth_header` is `Some((name, value))` when the provider requires
 /// authentication, or `None` when no auth header should be added.
-#[allow(dead_code)] // reserved for Files API / transcription multipart uploads
 #[cfg_attr(
     feature = "tracing",
     tracing::instrument(
@@ -294,7 +293,6 @@ pub async fn post_multipart(
 /// (e.g. GET /files/{id}, GET /batches/{id}).
 ///
 /// Retries on 429 / 5xx according to `max_retries`.
-#[allow(dead_code)] // reserved for Files / Batches API retrieve endpoints
 #[cfg_attr(
     feature = "tracing",
     tracing::instrument(
@@ -345,7 +343,6 @@ pub async fn get_json_raw(
 /// Used for resource deletion endpoints (e.g. DELETE /files/{id}).
 ///
 /// Retries on 429 / 5xx according to `max_retries`.
-#[allow(dead_code)] // reserved for Files API delete endpoint
 #[cfg_attr(
     feature = "tracing",
     tracing::instrument(
@@ -396,7 +393,6 @@ pub async fn delete_json(
 /// for downloading file contents).
 ///
 /// Retries on 429 / 5xx according to `max_retries`.
-#[allow(dead_code)] // reserved for Files API content download endpoint
 #[cfg_attr(
     feature = "tracing",
     tracing::instrument(

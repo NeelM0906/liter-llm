@@ -553,3 +553,265 @@ impl LlmClient for DefaultClient {
         })
     }
 }
+
+#[cfg(feature = "native-http")]
+impl FileClient for DefaultClient {
+    fn create_file(&self, req: CreateFileRequest) -> BoxFuture<'_, FileObject> {
+        Box::pin(async move {
+            let url = self.provider.build_url(self.provider.files_path(), "");
+            let auth_header = self.resolve_auth_header().await?;
+            let auth = auth_header.as_ref().map(str_pair);
+            let all_headers = self.all_headers("POST", &url, &serde_json::Value::Null, &[]);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+
+            // Decode the base64-encoded file data into raw bytes for the multipart upload.
+            use base64::Engine;
+            let file_bytes = base64::engine::general_purpose::STANDARD
+                .decode(&req.file)
+                .map_err(|e| LiterLmError::BadRequest {
+                    message: format!("invalid base64 file data: {e}"),
+                })?;
+
+            let filename = req.filename.unwrap_or_else(|| "upload".to_owned());
+            let file_part = reqwest::multipart::Part::bytes(file_bytes).file_name(filename);
+            let purpose_str = serde_json::to_value(&req.purpose)?
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            let form = reqwest::multipart::Form::new()
+                .part("file", file_part)
+                .text("purpose", purpose_str);
+
+            let raw = http::request::post_multipart(&self.http, &url, auth, &extra, form).await?;
+            serde_json::from_value::<FileObject>(raw).map_err(LiterLmError::from)
+        })
+    }
+
+    fn retrieve_file(&self, file_id: &str) -> BoxFuture<'_, FileObject> {
+        let file_id = file_id.to_owned();
+        Box::pin(async move {
+            let url = format!(
+                "{}/{}",
+                self.provider.build_url(self.provider.files_path(), ""),
+                file_id
+            );
+            let auth_header = self.resolve_auth_header().await?;
+            let auth = auth_header.as_ref().map(str_pair);
+            let all_headers = self.all_headers("GET", &url, &serde_json::Value::Null, &[]);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+
+            let raw = http::request::get_json_raw(&self.http, &url, auth, &extra, self.config.max_retries).await?;
+            serde_json::from_value::<FileObject>(raw).map_err(LiterLmError::from)
+        })
+    }
+
+    fn delete_file(&self, file_id: &str) -> BoxFuture<'_, DeleteResponse> {
+        let file_id = file_id.to_owned();
+        Box::pin(async move {
+            let url = format!(
+                "{}/{}",
+                self.provider.build_url(self.provider.files_path(), ""),
+                file_id
+            );
+            let auth_header = self.resolve_auth_header().await?;
+            let auth = auth_header.as_ref().map(str_pair);
+            let all_headers = self.all_headers("DELETE", &url, &serde_json::Value::Null, &[]);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+
+            let raw = http::request::delete_json(&self.http, &url, auth, &extra, self.config.max_retries).await?;
+            serde_json::from_value::<DeleteResponse>(raw).map_err(LiterLmError::from)
+        })
+    }
+
+    fn list_files(&self, query: Option<FileListQuery>) -> BoxFuture<'_, FileListResponse> {
+        Box::pin(async move {
+            let base_url = self.provider.build_url(self.provider.files_path(), "");
+            let url = if let Some(ref q) = query {
+                let mut params = Vec::new();
+                if let Some(ref purpose) = q.purpose {
+                    params.push(format!("purpose={purpose}"));
+                }
+                if let Some(limit) = q.limit {
+                    params.push(format!("limit={limit}"));
+                }
+                if let Some(ref after) = q.after {
+                    params.push(format!("after={after}"));
+                }
+                if params.is_empty() {
+                    base_url
+                } else {
+                    format!("{base_url}?{}", params.join("&"))
+                }
+            } else {
+                base_url
+            };
+            let auth_header = self.resolve_auth_header().await?;
+            let auth = auth_header.as_ref().map(str_pair);
+            let all_headers = self.all_headers("GET", &url, &serde_json::Value::Null, &[]);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+
+            let raw = http::request::get_json_raw(&self.http, &url, auth, &extra, self.config.max_retries).await?;
+            serde_json::from_value::<FileListResponse>(raw).map_err(LiterLmError::from)
+        })
+    }
+
+    fn file_content(&self, file_id: &str) -> BoxFuture<'_, bytes::Bytes> {
+        let file_id = file_id.to_owned();
+        Box::pin(async move {
+            let url = format!(
+                "{}/{}/content",
+                self.provider.build_url(self.provider.files_path(), ""),
+                file_id
+            );
+            let auth_header = self.resolve_auth_header().await?;
+            let auth = auth_header.as_ref().map(str_pair);
+            let all_headers = self.all_headers("GET", &url, &serde_json::Value::Null, &[]);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+
+            http::request::get_binary(&self.http, &url, auth, &extra, self.config.max_retries).await
+        })
+    }
+}
+
+#[cfg(feature = "native-http")]
+impl BatchClient for DefaultClient {
+    fn create_batch(&self, req: CreateBatchRequest) -> BoxFuture<'_, BatchObject> {
+        Box::pin(async move {
+            let url = self.provider.build_url(self.provider.batches_path(), "");
+            let body_bytes = bytes::Bytes::from(serde_json::to_vec(&req)?);
+            let body_json = serde_json::to_value(&req)?;
+
+            let auth_header = self.resolve_auth_header().await?;
+            let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+            let auth = auth_header.as_ref().map(str_pair);
+
+            let raw = http::request::post_json_raw(&self.http, &url, auth, &extra, body_bytes, self.config.max_retries)
+                .await?;
+            serde_json::from_value::<BatchObject>(raw).map_err(LiterLmError::from)
+        })
+    }
+
+    fn retrieve_batch(&self, batch_id: &str) -> BoxFuture<'_, BatchObject> {
+        let batch_id = batch_id.to_owned();
+        Box::pin(async move {
+            let url = format!(
+                "{}/{}",
+                self.provider.build_url(self.provider.batches_path(), ""),
+                batch_id
+            );
+            let auth_header = self.resolve_auth_header().await?;
+            let auth = auth_header.as_ref().map(str_pair);
+            let all_headers = self.all_headers("GET", &url, &serde_json::Value::Null, &[]);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+
+            let raw = http::request::get_json_raw(&self.http, &url, auth, &extra, self.config.max_retries).await?;
+            serde_json::from_value::<BatchObject>(raw).map_err(LiterLmError::from)
+        })
+    }
+
+    fn list_batches(&self, query: Option<BatchListQuery>) -> BoxFuture<'_, BatchListResponse> {
+        Box::pin(async move {
+            let base_url = self.provider.build_url(self.provider.batches_path(), "");
+            let url = if let Some(ref q) = query {
+                let mut params = Vec::new();
+                if let Some(limit) = q.limit {
+                    params.push(format!("limit={limit}"));
+                }
+                if let Some(ref after) = q.after {
+                    params.push(format!("after={after}"));
+                }
+                if params.is_empty() {
+                    base_url
+                } else {
+                    format!("{base_url}?{}", params.join("&"))
+                }
+            } else {
+                base_url
+            };
+            let auth_header = self.resolve_auth_header().await?;
+            let auth = auth_header.as_ref().map(str_pair);
+            let all_headers = self.all_headers("GET", &url, &serde_json::Value::Null, &[]);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+
+            let raw = http::request::get_json_raw(&self.http, &url, auth, &extra, self.config.max_retries).await?;
+            serde_json::from_value::<BatchListResponse>(raw).map_err(LiterLmError::from)
+        })
+    }
+
+    fn cancel_batch(&self, batch_id: &str) -> BoxFuture<'_, BatchObject> {
+        let batch_id = batch_id.to_owned();
+        Box::pin(async move {
+            let url = format!(
+                "{}/{}/cancel",
+                self.provider.build_url(self.provider.batches_path(), ""),
+                batch_id
+            );
+            let auth_header = self.resolve_auth_header().await?;
+            let body_json = serde_json::Value::Null;
+            let body_bytes = bytes::Bytes::new();
+            let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+            let auth = auth_header.as_ref().map(str_pair);
+
+            let raw = http::request::post_json_raw(&self.http, &url, auth, &extra, body_bytes, self.config.max_retries)
+                .await?;
+            serde_json::from_value::<BatchObject>(raw).map_err(LiterLmError::from)
+        })
+    }
+}
+
+#[cfg(feature = "native-http")]
+impl ResponseClient for DefaultClient {
+    fn create_response(&self, req: CreateResponseRequest) -> BoxFuture<'_, ResponseObject> {
+        Box::pin(async move {
+            let url = self.provider.build_url(self.provider.responses_path(), "");
+            let body_bytes = bytes::Bytes::from(serde_json::to_vec(&req)?);
+            let body_json = serde_json::to_value(&req)?;
+
+            let auth_header = self.resolve_auth_header().await?;
+            let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+            let auth = auth_header.as_ref().map(str_pair);
+
+            let raw = http::request::post_json_raw(&self.http, &url, auth, &extra, body_bytes, self.config.max_retries)
+                .await?;
+            serde_json::from_value::<ResponseObject>(raw).map_err(LiterLmError::from)
+        })
+    }
+
+    fn retrieve_response(&self, id: &str) -> BoxFuture<'_, ResponseObject> {
+        let id = id.to_owned();
+        Box::pin(async move {
+            let url = format!("{}/{}", self.provider.build_url(self.provider.responses_path(), ""), id);
+            let auth_header = self.resolve_auth_header().await?;
+            let auth = auth_header.as_ref().map(str_pair);
+            let all_headers = self.all_headers("GET", &url, &serde_json::Value::Null, &[]);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+
+            let raw = http::request::get_json_raw(&self.http, &url, auth, &extra, self.config.max_retries).await?;
+            serde_json::from_value::<ResponseObject>(raw).map_err(LiterLmError::from)
+        })
+    }
+
+    fn cancel_response(&self, id: &str) -> BoxFuture<'_, ResponseObject> {
+        let id = id.to_owned();
+        Box::pin(async move {
+            let url = format!(
+                "{}/{}/cancel",
+                self.provider.build_url(self.provider.responses_path(), ""),
+                id
+            );
+            let auth_header = self.resolve_auth_header().await?;
+            let body_json = serde_json::Value::Null;
+            let body_bytes = bytes::Bytes::new();
+            let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+            let auth = auth_header.as_ref().map(str_pair);
+
+            let raw = http::request::post_json_raw(&self.http, &url, auth, &extra, body_bytes, self.config.max_retries)
+                .await?;
+            serde_json::from_value::<ResponseObject>(raw).map_err(LiterLmError::from)
+        })
+    }
+}

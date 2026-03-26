@@ -1,3 +1,10 @@
+#[cfg(feature = "azure-auth")]
+pub mod azure_ad;
+#[cfg(feature = "bedrock-auth")]
+pub mod bedrock_sts;
+#[cfg(feature = "vertex-auth")]
+pub mod vertex_oauth;
+
 use std::sync::Arc;
 
 use secrecy::SecretString;
