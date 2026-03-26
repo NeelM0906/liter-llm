@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use liter_lm::LlmClient as LlmClientTrait;
-use liter_lm::{ClientConfigBuilder, DefaultClient};
+use liter_lm::{BatchClient, ClientConfigBuilder, DefaultClient, FileClient, ResponseClient};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
@@ -238,6 +238,308 @@ impl LlmClient {
     pub async fn list_models(&self) -> napi::Result<serde_json::Value> {
         let client = Arc::clone(&self.inner);
         let result = client.list_models().await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    // ── Additional inference methods ─────────────────────────────────────────
+
+    /// Generate an image from a text prompt.
+    ///
+    /// Accepts a plain JS object matching the OpenAI Images API.
+    /// Returns a `Promise<object>` resolving to an `ImagesResponse`.
+    ///
+    /// ```js
+    /// const resp = await client.imageGenerate({ model: "dall-e-3", prompt: "A sunset" });
+    /// console.log(resp.data[0].url);
+    /// ```
+    #[napi(js_name = "imageGenerate")]
+    pub async fn image_generate(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
+        let req: liter_lm::CreateImageRequest =
+            serde_json::from_value(request).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        let result = client.image_generate(req).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    /// Generate speech audio from text.
+    ///
+    /// Accepts a plain JS object matching the OpenAI Audio Speech API.
+    /// Returns a `Promise<Buffer>` containing the raw audio bytes.
+    ///
+    /// ```js
+    /// const buf = await client.speech({ model: "tts-1", input: "Hello", voice: "alloy" });
+    /// fs.writeFileSync("output.mp3", buf);
+    /// ```
+    pub async fn speech(&self, request: serde_json::Value) -> napi::Result<Buffer> {
+        let req: liter_lm::CreateSpeechRequest =
+            serde_json::from_value(request).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        let result = client.speech(req).await.map_err(to_napi_err)?;
+        Ok(result.to_vec().into())
+    }
+
+    /// Transcribe audio to text.
+    ///
+    /// Accepts a plain JS object matching the OpenAI Audio Transcriptions API.
+    /// Returns a `Promise<object>` resolving to a `TranscriptionResponse`.
+    ///
+    /// ```js
+    /// const resp = await client.transcribe({ model: "whisper-1", file: base64Audio });
+    /// console.log(resp.text);
+    /// ```
+    pub async fn transcribe(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
+        let req: liter_lm::CreateTranscriptionRequest =
+            serde_json::from_value(request).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        let result = client.transcribe(req).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    /// Check content against moderation policies.
+    ///
+    /// Accepts a plain JS object matching the OpenAI Moderations API.
+    /// Returns a `Promise<object>` resolving to a `ModerationResponse`.
+    ///
+    /// ```js
+    /// const resp = await client.moderate({ model: "text-moderation-latest", input: "some text" });
+    /// console.log(resp.results[0].flagged);
+    /// ```
+    pub async fn moderate(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
+        let req: liter_lm::ModerationRequest =
+            serde_json::from_value(request).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        let result = client.moderate(req).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    /// Rerank documents by relevance to a query.
+    ///
+    /// Accepts a plain JS object matching the rerank API format.
+    /// Returns a `Promise<object>` resolving to a `RerankResponse`.
+    ///
+    /// ```js
+    /// const resp = await client.rerank({ model: "rerank-v1", query: "q", documents: ["a", "b"] });
+    /// console.log(resp.results);
+    /// ```
+    pub async fn rerank(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
+        let req: liter_lm::RerankRequest =
+            serde_json::from_value(request).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        let result = client.rerank(req).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    // ── File management methods ──────────────────────────────────────────────
+
+    /// Upload a file.
+    ///
+    /// Accepts a plain JS object with `file` (base64-encoded), `purpose`, and
+    /// optional `filename` fields.
+    /// Returns a `Promise<object>` resolving to a `FileObject`.
+    ///
+    /// ```js
+    /// const resp = await client.createFile({ file: base64Data, purpose: "assistants" });
+    /// console.log(resp.id);
+    /// ```
+    #[napi(js_name = "createFile")]
+    pub async fn create_file(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
+        let req: liter_lm::CreateFileRequest =
+            serde_json::from_value(request).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        let result = client.create_file(req).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    /// Retrieve metadata for a file by ID.
+    ///
+    /// Returns a `Promise<object>` resolving to a `FileObject`.
+    ///
+    /// ```js
+    /// const file = await client.retrieveFile("file-abc123");
+    /// console.log(file.filename);
+    /// ```
+    #[napi(js_name = "retrieveFile")]
+    pub async fn retrieve_file(&self, file_id: String) -> napi::Result<serde_json::Value> {
+        let client = Arc::clone(&self.inner);
+        let result = client.retrieve_file(&file_id).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    /// Delete a file by ID.
+    ///
+    /// Returns a `Promise<object>` resolving to a `DeleteResponse`.
+    ///
+    /// ```js
+    /// const resp = await client.deleteFile("file-abc123");
+    /// console.log(resp.deleted);
+    /// ```
+    #[napi(js_name = "deleteFile")]
+    pub async fn delete_file(&self, file_id: String) -> napi::Result<serde_json::Value> {
+        let client = Arc::clone(&self.inner);
+        let result = client.delete_file(&file_id).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    /// List files, optionally filtered by query parameters.
+    ///
+    /// Pass `null` or `undefined` to list all files without filtering.
+    /// Returns a `Promise<object>` resolving to a `FileListResponse`.
+    ///
+    /// ```js
+    /// const resp = await client.listFiles({ purpose: "assistants" });
+    /// console.log(resp.data.map(f => f.id));
+    /// ```
+    #[napi(js_name = "listFiles")]
+    pub async fn list_files(&self, query: Option<serde_json::Value>) -> napi::Result<serde_json::Value> {
+        let parsed: Option<liter_lm::FileListQuery> = query
+            .map(|v| serde_json::from_value(v).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string())))
+            .transpose()?;
+
+        let client = Arc::clone(&self.inner);
+        let result = client.list_files(parsed).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    /// Retrieve the raw content of a file.
+    ///
+    /// Returns a `Promise<Buffer>` containing the file bytes.
+    ///
+    /// ```js
+    /// const buf = await client.fileContent("file-abc123");
+    /// fs.writeFileSync("downloaded.jsonl", buf);
+    /// ```
+    #[napi(js_name = "fileContent")]
+    pub async fn file_content(&self, file_id: String) -> napi::Result<Buffer> {
+        let client = Arc::clone(&self.inner);
+        let result = client.file_content(&file_id).await.map_err(to_napi_err)?;
+        Ok(result.to_vec().into())
+    }
+
+    // ── Batch management methods ─────────────────────────────────────────────
+
+    /// Create a new batch job.
+    ///
+    /// Accepts a plain JS object with batch creation parameters.
+    /// Returns a `Promise<object>` resolving to a `BatchObject`.
+    ///
+    /// ```js
+    /// const batch = await client.createBatch({ inputFileId: "file-abc", endpoint: "/v1/chat/completions" });
+    /// console.log(batch.id);
+    /// ```
+    #[napi(js_name = "createBatch")]
+    pub async fn create_batch(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
+        let req: liter_lm::CreateBatchRequest =
+            serde_json::from_value(request).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        let result = client.create_batch(req).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    /// Retrieve a batch by ID.
+    ///
+    /// Returns a `Promise<object>` resolving to a `BatchObject`.
+    ///
+    /// ```js
+    /// const batch = await client.retrieveBatch("batch_abc123");
+    /// console.log(batch.status);
+    /// ```
+    #[napi(js_name = "retrieveBatch")]
+    pub async fn retrieve_batch(&self, batch_id: String) -> napi::Result<serde_json::Value> {
+        let client = Arc::clone(&self.inner);
+        let result = client.retrieve_batch(&batch_id).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    /// List batches, optionally filtered by query parameters.
+    ///
+    /// Pass `null` or `undefined` to list all batches without filtering.
+    /// Returns a `Promise<object>` resolving to a `BatchListResponse`.
+    ///
+    /// ```js
+    /// const resp = await client.listBatches();
+    /// console.log(resp.data.map(b => b.id));
+    /// ```
+    #[napi(js_name = "listBatches")]
+    pub async fn list_batches(&self, query: Option<serde_json::Value>) -> napi::Result<serde_json::Value> {
+        let parsed: Option<liter_lm::BatchListQuery> = query
+            .map(|v| serde_json::from_value(v).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string())))
+            .transpose()?;
+
+        let client = Arc::clone(&self.inner);
+        let result = client.list_batches(parsed).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    /// Cancel an in-progress batch.
+    ///
+    /// Returns a `Promise<object>` resolving to the cancelled `BatchObject`.
+    ///
+    /// ```js
+    /// const batch = await client.cancelBatch("batch_abc123");
+    /// console.log(batch.status); // "cancelling"
+    /// ```
+    #[napi(js_name = "cancelBatch")]
+    pub async fn cancel_batch(&self, batch_id: String) -> napi::Result<serde_json::Value> {
+        let client = Arc::clone(&self.inner);
+        let result = client.cancel_batch(&batch_id).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    // ── Response management methods ──────────────────────────────────────────
+
+    /// Create a new response.
+    ///
+    /// Accepts a plain JS object with response creation parameters.
+    /// Returns a `Promise<object>` resolving to a `ResponseObject`.
+    ///
+    /// ```js
+    /// const resp = await client.createResponse({ model: "gpt-4", input: "Hello" });
+    /// console.log(resp.id);
+    /// ```
+    #[napi(js_name = "createResponse")]
+    pub async fn create_response(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
+        let req: liter_lm::CreateResponseRequest =
+            serde_json::from_value(request).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        let result = client.create_response(req).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    /// Retrieve a response by ID.
+    ///
+    /// Returns a `Promise<object>` resolving to a `ResponseObject`.
+    ///
+    /// ```js
+    /// const resp = await client.retrieveResponse("resp_abc123");
+    /// console.log(resp.status);
+    /// ```
+    #[napi(js_name = "retrieveResponse")]
+    pub async fn retrieve_response(&self, id: String) -> napi::Result<serde_json::Value> {
+        let client = Arc::clone(&self.inner);
+        let result = client.retrieve_response(&id).await.map_err(to_napi_err)?;
+        to_js_value(result)
+    }
+
+    /// Cancel an in-progress response.
+    ///
+    /// Returns a `Promise<object>` resolving to the cancelled `ResponseObject`.
+    ///
+    /// ```js
+    /// const resp = await client.cancelResponse("resp_abc123");
+    /// console.log(resp.status); // "cancelled"
+    /// ```
+    #[napi(js_name = "cancelResponse")]
+    pub async fn cancel_response(&self, id: String) -> napi::Result<serde_json::Value> {
+        let client = Arc::clone(&self.inner);
+        let result = client.cancel_response(&id).await.map_err(to_napi_err)?;
         to_js_value(result)
     }
 }

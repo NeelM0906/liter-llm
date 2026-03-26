@@ -717,6 +717,585 @@ impl From<liter_lm::types::ModelsListResponse> for PyModelsListResponse {
     }
 }
 
+// ─── Image generation types ──────────────────────────────────────────────────
+
+/// A single generated image, returned as either a URL or base64 data.
+#[pyclass(frozen, skip_from_py_object, name = "Image")]
+#[derive(Clone)]
+pub struct PyImage {
+    inner: liter_lm::types::Image,
+}
+
+#[pymethods]
+impl PyImage {
+    /// URL of the generated image, or `None` if `b64_json` was requested.
+    #[getter]
+    fn url(&self) -> Option<&str> {
+        self.inner.url.as_deref()
+    }
+
+    /// Base64-encoded image data, or `None` if `url` format was requested.
+    #[getter]
+    fn b64_json(&self) -> Option<&str> {
+        self.inner.b64_json.as_deref()
+    }
+
+    /// The prompt that was used to generate this image, revised by the model.
+    #[getter]
+    fn revised_prompt(&self) -> Option<&str> {
+        self.inner.revised_prompt.as_deref()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Image(url={:?}, b64_json={}, revised_prompt={:?})",
+            self.inner.url,
+            self.inner.b64_json.as_ref().map_or("None", |_| "..."),
+            self.inner.revised_prompt
+        )
+    }
+
+    fn __eq__(&self, other: &PyImage) -> bool {
+        self.inner == other.inner
+    }
+}
+
+/// Response containing generated images.
+#[pyclass(frozen, name = "ImagesResponse")]
+pub struct PyImagesResponse {
+    inner: liter_lm::types::ImagesResponse,
+}
+
+#[pymethods]
+impl PyImagesResponse {
+    /// Unix timestamp of when the images were created.
+    #[getter]
+    fn created(&self) -> u64 {
+        self.inner.created
+    }
+
+    /// List of generated images.
+    #[getter]
+    fn data(&self) -> Vec<PyImage> {
+        self.inner
+            .data
+            .iter()
+            .map(|img| PyImage { inner: img.clone() })
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ImagesResponse(created={}, count={})",
+            self.inner.created,
+            self.inner.data.len()
+        )
+    }
+
+    fn __eq__(&self, other: &PyImagesResponse) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl From<liter_lm::types::ImagesResponse> for PyImagesResponse {
+    fn from(inner: liter_lm::types::ImagesResponse) -> Self {
+        Self { inner }
+    }
+}
+
+// ─── Transcription types ─────────────────────────────────────────────────────
+
+/// A segment of transcribed audio with timing information.
+#[pyclass(frozen, skip_from_py_object, name = "TranscriptionSegment")]
+#[derive(Clone)]
+pub struct PyTranscriptionSegment {
+    inner: liter_lm::types::TranscriptionSegment,
+}
+
+#[pymethods]
+impl PyTranscriptionSegment {
+    #[getter]
+    fn id(&self) -> u32 {
+        self.inner.id
+    }
+
+    #[getter]
+    fn start(&self) -> f64 {
+        self.inner.start
+    }
+
+    #[getter]
+    fn end(&self) -> f64 {
+        self.inner.end
+    }
+
+    #[getter]
+    fn text(&self) -> &str {
+        &self.inner.text
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "TranscriptionSegment(id={}, start={}, end={}, text={:?})",
+            self.inner.id, self.inner.start, self.inner.end, self.inner.text
+        )
+    }
+
+    fn __eq__(&self, other: &PyTranscriptionSegment) -> bool {
+        self.inner == other.inner
+    }
+}
+
+/// Response from a transcription request.
+#[pyclass(frozen, name = "TranscriptionResponse")]
+pub struct PyTranscriptionResponse {
+    inner: liter_lm::types::TranscriptionResponse,
+}
+
+#[pymethods]
+impl PyTranscriptionResponse {
+    /// The transcribed text.
+    #[getter]
+    fn text(&self) -> &str {
+        &self.inner.text
+    }
+
+    /// The detected language, or `None`.
+    #[getter]
+    fn language(&self) -> Option<&str> {
+        self.inner.language.as_deref()
+    }
+
+    /// Duration of the audio in seconds, or `None`.
+    #[getter]
+    fn duration(&self) -> Option<f64> {
+        self.inner.duration
+    }
+
+    /// Transcription segments with timing, or `None`.
+    #[getter]
+    fn segments(&self) -> Option<Vec<PyTranscriptionSegment>> {
+        self.inner.segments.as_ref().map(|segs| {
+            segs.iter()
+                .map(|s| PyTranscriptionSegment { inner: s.clone() })
+                .collect()
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "TranscriptionResponse(text={:?}, language={:?}, duration={:?})",
+            self.inner.text, self.inner.language, self.inner.duration
+        )
+    }
+
+    fn __eq__(&self, other: &PyTranscriptionResponse) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl From<liter_lm::types::TranscriptionResponse> for PyTranscriptionResponse {
+    fn from(inner: liter_lm::types::TranscriptionResponse) -> Self {
+        Self { inner }
+    }
+}
+
+// ─── Moderation types ────────────────────────────────────────────────────────
+
+/// Boolean flags for each moderation category.
+#[pyclass(frozen, skip_from_py_object, name = "ModerationCategories")]
+#[derive(Clone)]
+pub struct PyModerationCategories {
+    inner: liter_lm::types::ModerationCategories,
+}
+
+#[pymethods]
+impl PyModerationCategories {
+    #[getter]
+    fn sexual(&self) -> bool {
+        self.inner.sexual
+    }
+    #[getter]
+    fn hate(&self) -> bool {
+        self.inner.hate
+    }
+    #[getter]
+    fn harassment(&self) -> bool {
+        self.inner.harassment
+    }
+    #[getter]
+    fn self_harm(&self) -> bool {
+        self.inner.self_harm
+    }
+    #[getter]
+    fn sexual_minors(&self) -> bool {
+        self.inner.sexual_minors
+    }
+    #[getter]
+    fn hate_threatening(&self) -> bool {
+        self.inner.hate_threatening
+    }
+    #[getter]
+    fn violence_graphic(&self) -> bool {
+        self.inner.violence_graphic
+    }
+    #[getter]
+    fn self_harm_intent(&self) -> bool {
+        self.inner.self_harm_intent
+    }
+    #[getter]
+    fn self_harm_instructions(&self) -> bool {
+        self.inner.self_harm_instructions
+    }
+    #[getter]
+    fn harassment_threatening(&self) -> bool {
+        self.inner.harassment_threatening
+    }
+    #[getter]
+    fn violence(&self) -> bool {
+        self.inner.violence
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ModerationCategories(sexual={}, hate={}, harassment={}, violence={})",
+            self.inner.sexual, self.inner.hate, self.inner.harassment, self.inner.violence
+        )
+    }
+
+    fn __eq__(&self, other: &PyModerationCategories) -> bool {
+        self.inner == other.inner
+    }
+}
+
+/// Confidence scores for each moderation category.
+#[pyclass(frozen, skip_from_py_object, name = "ModerationCategoryScores")]
+#[derive(Clone)]
+pub struct PyModerationCategoryScores {
+    inner: liter_lm::types::ModerationCategoryScores,
+}
+
+#[pymethods]
+impl PyModerationCategoryScores {
+    #[getter]
+    fn sexual(&self) -> f64 {
+        self.inner.sexual
+    }
+    #[getter]
+    fn hate(&self) -> f64 {
+        self.inner.hate
+    }
+    #[getter]
+    fn harassment(&self) -> f64 {
+        self.inner.harassment
+    }
+    #[getter]
+    fn self_harm(&self) -> f64 {
+        self.inner.self_harm
+    }
+    #[getter]
+    fn sexual_minors(&self) -> f64 {
+        self.inner.sexual_minors
+    }
+    #[getter]
+    fn hate_threatening(&self) -> f64 {
+        self.inner.hate_threatening
+    }
+    #[getter]
+    fn violence_graphic(&self) -> f64 {
+        self.inner.violence_graphic
+    }
+    #[getter]
+    fn self_harm_intent(&self) -> f64 {
+        self.inner.self_harm_intent
+    }
+    #[getter]
+    fn self_harm_instructions(&self) -> f64 {
+        self.inner.self_harm_instructions
+    }
+    #[getter]
+    fn harassment_threatening(&self) -> f64 {
+        self.inner.harassment_threatening
+    }
+    #[getter]
+    fn violence(&self) -> f64 {
+        self.inner.violence
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ModerationCategoryScores(sexual={}, hate={}, harassment={}, violence={})",
+            self.inner.sexual, self.inner.hate, self.inner.harassment, self.inner.violence
+        )
+    }
+
+    fn __eq__(&self, other: &PyModerationCategoryScores) -> bool {
+        self.inner == other.inner
+    }
+}
+
+/// A single moderation classification result.
+#[pyclass(frozen, skip_from_py_object, name = "ModerationResult")]
+#[derive(Clone)]
+pub struct PyModerationResult {
+    inner: liter_lm::types::ModerationResult,
+}
+
+#[pymethods]
+impl PyModerationResult {
+    /// Whether the content was flagged by any category.
+    #[getter]
+    fn flagged(&self) -> bool {
+        self.inner.flagged
+    }
+
+    /// Boolean flags for each moderation category.
+    #[getter]
+    fn categories(&self) -> PyModerationCategories {
+        PyModerationCategories {
+            inner: self.inner.categories.clone(),
+        }
+    }
+
+    /// Confidence scores for each moderation category.
+    #[getter]
+    fn category_scores(&self) -> PyModerationCategoryScores {
+        PyModerationCategoryScores {
+            inner: self.inner.category_scores.clone(),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ModerationResult(flagged={})", self.inner.flagged)
+    }
+
+    fn __eq__(&self, other: &PyModerationResult) -> bool {
+        self.inner == other.inner
+    }
+}
+
+/// Response from the moderation endpoint.
+#[pyclass(frozen, name = "ModerationResponse")]
+pub struct PyModerationResponse {
+    inner: liter_lm::types::ModerationResponse,
+}
+
+#[pymethods]
+impl PyModerationResponse {
+    /// Unique identifier for this moderation request.
+    #[getter]
+    fn id(&self) -> &str {
+        &self.inner.id
+    }
+
+    /// The model used for moderation.
+    #[getter]
+    fn model(&self) -> &str {
+        &self.inner.model
+    }
+
+    /// List of moderation results, one per input.
+    #[getter]
+    fn results(&self) -> Vec<PyModerationResult> {
+        self.inner
+            .results
+            .iter()
+            .map(|r| PyModerationResult { inner: r.clone() })
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ModerationResponse(id={:?}, model={:?}, results={})",
+            self.inner.id,
+            self.inner.model,
+            self.inner.results.len()
+        )
+    }
+
+    fn __eq__(&self, other: &PyModerationResponse) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl From<liter_lm::types::ModerationResponse> for PyModerationResponse {
+    fn from(inner: liter_lm::types::ModerationResponse) -> Self {
+        Self { inner }
+    }
+}
+
+// ─── Rerank types ────────────────────────────────────────────────────────────
+
+/// The text content of a reranked document.
+#[pyclass(frozen, skip_from_py_object, name = "RerankResultDocument")]
+#[derive(Clone)]
+pub struct PyRerankResultDocument {
+    inner: liter_lm::types::RerankResultDocument,
+}
+
+#[pymethods]
+impl PyRerankResultDocument {
+    #[getter]
+    fn text(&self) -> &str {
+        &self.inner.text
+    }
+
+    fn __repr__(&self) -> String {
+        format!("RerankResultDocument(text={:?})", self.inner.text)
+    }
+
+    fn __eq__(&self, other: &PyRerankResultDocument) -> bool {
+        self.inner == other.inner
+    }
+}
+
+/// A single reranked document with its relevance score.
+#[pyclass(frozen, skip_from_py_object, name = "RerankResult")]
+#[derive(Clone)]
+pub struct PyRerankResult {
+    inner: liter_lm::types::RerankResult,
+}
+
+#[pymethods]
+impl PyRerankResult {
+    /// Original index of the document in the input list.
+    #[getter]
+    fn index(&self) -> u32 {
+        self.inner.index
+    }
+
+    /// Relevance score assigned by the reranker.
+    #[getter]
+    fn relevance_score(&self) -> f64 {
+        self.inner.relevance_score
+    }
+
+    /// The document content, present when ``return_documents`` was set.
+    #[getter]
+    fn document(&self) -> Option<PyRerankResultDocument> {
+        self.inner
+            .document
+            .as_ref()
+            .map(|d| PyRerankResultDocument { inner: d.clone() })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RerankResult(index={}, relevance_score={})",
+            self.inner.index, self.inner.relevance_score
+        )
+    }
+
+    fn __eq__(&self, other: &PyRerankResult) -> bool {
+        self.inner == other.inner
+    }
+}
+
+/// Response from the rerank endpoint.
+#[pyclass(frozen, name = "RerankResponse")]
+pub struct PyRerankResponse {
+    inner: liter_lm::types::RerankResponse,
+}
+
+#[pymethods]
+impl PyRerankResponse {
+    /// Unique identifier for this rerank request, or `None`.
+    #[getter]
+    fn id(&self) -> Option<&str> {
+        self.inner.id.as_deref()
+    }
+
+    /// Reranked results sorted by relevance.
+    #[getter]
+    fn results(&self) -> Vec<PyRerankResult> {
+        self.inner
+            .results
+            .iter()
+            .map(|r| PyRerankResult { inner: r.clone() })
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RerankResponse(id={:?}, results={})",
+            self.inner.id,
+            self.inner.results.len()
+        )
+    }
+
+    fn __eq__(&self, other: &PyRerankResponse) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl From<liter_lm::types::RerankResponse> for PyRerankResponse {
+    fn from(inner: liter_lm::types::RerankResponse) -> Self {
+        Self { inner }
+    }
+}
+
+// ─── JSON-to-Python conversion helper ────────────────────────────────────────
+
+/// A wrapper around `serde_json::Value` that converts to native Python objects
+/// when returned from async methods.
+///
+/// This implements `IntoPyObject` so it can be returned directly from
+/// `future_into_py` closures.
+pub struct JsonValue(pub serde_json::Value);
+
+impl<'py> IntoPyObject<'py> for JsonValue {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        json_to_py_bound(py, &self.0)
+    }
+}
+
+/// Convert a `serde_json::Value` into a native Python object (dict, list, str,
+/// int, float, bool, or None).  Used for management API responses that return
+/// plain dicts rather than typed pyclasses.
+fn json_to_py_bound<'py>(py: Python<'py>, val: &serde_json::Value) -> PyResult<Bound<'py, PyAny>> {
+    match val {
+        serde_json::Value::Null => Ok(py.None().into_bound(py)),
+        serde_json::Value::Bool(b) => Ok((*b).into_pyobject(py)?.to_owned().into_any()),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(i.into_pyobject(py)?.to_owned().into_any())
+            } else if let Some(u) = n.as_u64() {
+                Ok(u.into_pyobject(py)?.to_owned().into_any())
+            } else if let Some(f) = n.as_f64() {
+                Ok(f.into_pyobject(py)?.into_any())
+            } else {
+                Ok(py.None().into_bound(py))
+            }
+        }
+        serde_json::Value::String(s) => Ok(s.into_pyobject(py)?.into_any()),
+        serde_json::Value::Array(arr) => {
+            let list = pyo3::types::PyList::empty(py);
+            for item in arr {
+                list.append(json_to_py_bound(py, item)?)?;
+            }
+            Ok(list.into_any())
+        }
+        serde_json::Value::Object(map) => {
+            let dict = pyo3::types::PyDict::new(py);
+            for (k, v) in map {
+                dict.set_item(k, json_to_py_bound(py, v)?)?;
+            }
+            Ok(dict.into_any())
+        }
+    }
+}
+
+/// Serialize a value to a `JsonValue` wrapper suitable for returning from async
+/// methods.  The wrapper implements `IntoPyObject` for automatic conversion.
+pub fn to_json_value<T: serde::Serialize>(val: &T) -> PyResult<JsonValue> {
+    let json = serde_json::to_value(val).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    Ok(JsonValue(json))
+}
+
 /// Register all response types on the module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyUsage>()?;
@@ -734,5 +1313,20 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyEmbeddingResponse>()?;
     m.add_class::<PyModelObject>()?;
     m.add_class::<PyModelsListResponse>()?;
+    // Image generation types
+    m.add_class::<PyImage>()?;
+    m.add_class::<PyImagesResponse>()?;
+    // Transcription types
+    m.add_class::<PyTranscriptionSegment>()?;
+    m.add_class::<PyTranscriptionResponse>()?;
+    // Moderation types
+    m.add_class::<PyModerationCategories>()?;
+    m.add_class::<PyModerationCategoryScores>()?;
+    m.add_class::<PyModerationResult>()?;
+    m.add_class::<PyModerationResponse>()?;
+    // Rerank types
+    m.add_class::<PyRerankResultDocument>()?;
+    m.add_class::<PyRerankResult>()?;
+    m.add_class::<PyRerankResponse>()?;
     Ok(())
 }

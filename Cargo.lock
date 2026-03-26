@@ -1878,9 +1878,12 @@ dependencies = [
 name = "liter-lm-ffi"
 version = "1.0.0-rc.1"
 dependencies = [
+ "base64 0.22.1",
+ "bytes",
  "cbindgen",
  "futures-core",
  "liter-lm",
+ "serde",
  "serde_json",
  "tokio",
 ]
@@ -1917,6 +1920,7 @@ dependencies = [
  "liter-lm",
  "pyo3",
  "pyo3-async-runtimes",
+ "serde",
  "serde_json",
  "tokio",
 ]

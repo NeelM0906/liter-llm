@@ -16,7 +16,7 @@
 
 use std::ffi::{CStr, CString, c_char};
 
-use liter_lm::client::{ClientConfig, DefaultClient, LlmClient};
+use liter_lm::client::{BatchClient, ClientConfig, DefaultClient, FileClient, LlmClient, ResponseClient};
 
 // ---------------------------------------------------------------------------
 // Thread-local last-error storage
@@ -560,6 +560,844 @@ pub unsafe extern "C" fn literlm_list_models(client: *const LiterLmClient) -> *m
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Helper: JSON-in / JSON-out for request-based endpoints
+// ---------------------------------------------------------------------------
+
+/// Internal helper shared by all JSON-in/JSON-out FFI functions that take a
+/// `(client, request_json)` pair.  Validates inputs, deserialises the JSON,
+/// calls `op` inside the Tokio runtime, serialises the response, and returns
+/// an owned `*mut c_char` (or `NULL` on error, with `LAST_ERROR` set).
+///
+/// `name` is used only for error messages.
+fn json_request_response<Req, Resp>(
+    name: &str,
+    client: *const LiterLmClient,
+    request_json: *const c_char,
+    op: impl for<'a> FnOnce(
+        &'a DefaultClient,
+        Req,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = liter_lm::error::Result<Resp>> + Send + 'a>,
+    >,
+) -> *mut c_char
+where
+    Req: serde::de::DeserializeOwned,
+    Resp: serde::Serialize,
+{
+    clear_last_error();
+
+    if client.is_null() {
+        set_last_error(format!("{name}: client must not be NULL"));
+        return std::ptr::null_mut();
+    }
+    if request_json.is_null() {
+        set_last_error(format!("{name}: request_json must not be NULL"));
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: caller guarantees `client` and `request_json` are non-null and valid.
+    let client_ref = unsafe { &(*client).inner };
+
+    let json_str = match unsafe { CStr::from_ptr(request_json) }.to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(format!("{name}: request_json is not valid UTF-8: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let request: Req = match serde_json::from_str(json_str) {
+        Ok(r) => r,
+        Err(e) => {
+            set_last_error(format!("{name}: failed to parse request JSON: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let rt = match runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            set_last_error(format!("{name}: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let result = rt.block_on(op(client_ref, request));
+
+    match result {
+        Ok(response) => match serde_json::to_string(&response) {
+            Ok(json) => match CString::new(json) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(e) => {
+                    set_last_error(format!("{name}: response JSON contained NUL byte: {e}"));
+                    std::ptr::null_mut()
+                }
+            },
+            Err(e) => {
+                set_last_error(format!("{name}: failed to serialize response: {e}"));
+                std::ptr::null_mut()
+            }
+        },
+        Err(e) => {
+            set_last_error(format!("{name}: {e}"));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Internal helper for endpoints that take `(client, id_string)` and return JSON.
+fn id_request_response<Resp>(
+    name: &str,
+    client: *const LiterLmClient,
+    id_ptr: *const c_char,
+    id_label: &str,
+    op: impl for<'a> FnOnce(
+        &'a DefaultClient,
+        &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = liter_lm::error::Result<Resp>> + Send + 'a>,
+    >,
+) -> *mut c_char
+where
+    Resp: serde::Serialize,
+{
+    clear_last_error();
+
+    if client.is_null() {
+        set_last_error(format!("{name}: client must not be NULL"));
+        return std::ptr::null_mut();
+    }
+    if id_ptr.is_null() {
+        set_last_error(format!("{name}: {id_label} must not be NULL"));
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: caller guarantees `client` and `id_ptr` are non-null and valid.
+    let client_ref = unsafe { &(*client).inner };
+
+    let id_str = match unsafe { CStr::from_ptr(id_ptr) }.to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(format!("{name}: {id_label} is not valid UTF-8: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let rt = match runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            set_last_error(format!("{name}: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let result = rt.block_on(op(client_ref, id_str));
+
+    match result {
+        Ok(response) => match serde_json::to_string(&response) {
+            Ok(json) => match CString::new(json) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(e) => {
+                    set_last_error(format!("{name}: response JSON contained NUL byte: {e}"));
+                    std::ptr::null_mut()
+                }
+            },
+            Err(e) => {
+                set_last_error(format!("{name}: failed to serialize response: {e}"));
+                std::ptr::null_mut()
+            }
+        },
+        Err(e) => {
+            set_last_error(format!("{name}: {e}"));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Internal helper for endpoints that return raw bytes (encoded as base64 JSON).
+fn id_request_bytes(
+    name: &str,
+    client: *const LiterLmClient,
+    id_ptr: *const c_char,
+    id_label: &str,
+    op: impl for<'a> FnOnce(
+        &'a DefaultClient,
+        &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = liter_lm::error::Result<bytes::Bytes>> + Send + 'a>,
+    >,
+) -> *mut c_char {
+    clear_last_error();
+
+    if client.is_null() {
+        set_last_error(format!("{name}: client must not be NULL"));
+        return std::ptr::null_mut();
+    }
+    if id_ptr.is_null() {
+        set_last_error(format!("{name}: {id_label} must not be NULL"));
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: caller guarantees `client` and `id_ptr` are non-null and valid.
+    let client_ref = unsafe { &(*client).inner };
+
+    let id_str = match unsafe { CStr::from_ptr(id_ptr) }.to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(format!("{name}: {id_label} is not valid UTF-8: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let rt = match runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            set_last_error(format!("{name}: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let result = rt.block_on(op(client_ref, id_str));
+
+    match result {
+        Ok(data) => {
+            use base64::Engine;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+            match CString::new(encoded) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(e) => {
+                    set_last_error(format!("{name}: base64 output contained NUL byte: {e}"));
+                    std::ptr::null_mut()
+                }
+            }
+        }
+        Err(e) => {
+            set_last_error(format!("{name}: {e}"));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Inference API: image_generate, speech, transcribe, moderate, rerank
+// ---------------------------------------------------------------------------
+
+/// Generate an image from a text prompt.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `request_json`: NUL-terminated JSON string conforming to the
+///   `CreateImageRequest` schema.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `ImagesResponse` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_image_generate(
+    client: *const LiterLmClient,
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_request_response("literlm_image_generate", client, request_json, |c, req| {
+        Box::pin(c.image_generate(req))
+    })
+}
+
+/// Generate speech audio from text.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `request_json`: NUL-terminated JSON string conforming to the
+///   `CreateSpeechRequest` schema.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated base64-encoded string of the audio
+/// bytes on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_speech(client: *const LiterLmClient, request_json: *const c_char) -> *mut c_char {
+    clear_last_error();
+
+    if client.is_null() {
+        set_last_error("literlm_speech: client must not be NULL".into());
+        return std::ptr::null_mut();
+    }
+    if request_json.is_null() {
+        set_last_error("literlm_speech: request_json must not be NULL".into());
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: caller guarantees both pointers are non-null and valid.
+    let client_ref = unsafe { &(*client).inner };
+
+    let json_str = match unsafe { CStr::from_ptr(request_json) }.to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(format!("literlm_speech: request_json is not valid UTF-8: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let request = match serde_json::from_str(json_str) {
+        Ok(r) => r,
+        Err(e) => {
+            set_last_error(format!("literlm_speech: failed to parse request JSON: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let rt = match runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            set_last_error(format!("literlm_speech: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let result = rt.block_on(client_ref.speech(request));
+
+    match result {
+        Ok(data) => {
+            use base64::Engine;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+            match CString::new(encoded) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(e) => {
+                    set_last_error(format!("literlm_speech: base64 output contained NUL byte: {e}"));
+                    std::ptr::null_mut()
+                }
+            }
+        }
+        Err(e) => {
+            set_last_error(format!("literlm_speech: {e}"));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Transcribe audio to text.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `request_json`: NUL-terminated JSON string conforming to the
+///   `CreateTranscriptionRequest` schema.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `TranscriptionResponse` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_transcribe(client: *const LiterLmClient, request_json: *const c_char) -> *mut c_char {
+    json_request_response("literlm_transcribe", client, request_json, |c, req| {
+        Box::pin(c.transcribe(req))
+    })
+}
+
+/// Check content against moderation policies.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `request_json`: NUL-terminated JSON string conforming to the
+///   `ModerationRequest` schema.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `ModerationResponse` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_moderate(client: *const LiterLmClient, request_json: *const c_char) -> *mut c_char {
+    json_request_response("literlm_moderate", client, request_json, |c, req| {
+        Box::pin(c.moderate(req))
+    })
+}
+
+/// Rerank documents by relevance to a query.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `request_json`: NUL-terminated JSON string conforming to the
+///   `RerankRequest` schema.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `RerankResponse` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_rerank(client: *const LiterLmClient, request_json: *const c_char) -> *mut c_char {
+    json_request_response("literlm_rerank", client, request_json, |c, req| Box::pin(c.rerank(req)))
+}
+
+// ---------------------------------------------------------------------------
+// File management API
+// ---------------------------------------------------------------------------
+
+/// Upload a file.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `request_json`: NUL-terminated JSON string conforming to the
+///   `CreateFileRequest` schema.  The `file` field must be base64-encoded.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `FileObject` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_create_file(client: *const LiterLmClient, request_json: *const c_char) -> *mut c_char {
+    json_request_response("literlm_create_file", client, request_json, |c, req| {
+        Box::pin(c.create_file(req))
+    })
+}
+
+/// Retrieve metadata for a file by ID.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `file_id`: NUL-terminated file ID string.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `FileObject` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `file_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_retrieve_file(client: *const LiterLmClient, file_id: *const c_char) -> *mut c_char {
+    id_request_response("literlm_retrieve_file", client, file_id, "file_id", |c, id| {
+        Box::pin(c.retrieve_file(id))
+    })
+}
+
+/// Delete a file by ID.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `file_id`: NUL-terminated file ID string.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `DeleteResponse` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `file_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_delete_file(client: *const LiterLmClient, file_id: *const c_char) -> *mut c_char {
+    id_request_response("literlm_delete_file", client, file_id, "file_id", |c, id| {
+        Box::pin(c.delete_file(id))
+    })
+}
+
+/// List files, optionally filtered by query parameters.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `query_json`: NUL-terminated JSON string conforming to the
+///   `FileListQuery` schema.  May be `NULL` to list all files.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `FileListResponse` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `query_json` may be `NULL` or a valid NUL-terminated UTF-8 JSON string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_list_files(client: *const LiterLmClient, query_json: *const c_char) -> *mut c_char {
+    clear_last_error();
+
+    if client.is_null() {
+        set_last_error("literlm_list_files: client must not be NULL".into());
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: caller guarantees `client` is non-null and valid.
+    let client_ref = unsafe { &(*client).inner };
+
+    let query: Option<liter_lm::types::files::FileListQuery> = if query_json.is_null() {
+        None
+    } else {
+        // SAFETY: caller guarantees `query_json` is a valid NUL-terminated string.
+        let json_str = match unsafe { CStr::from_ptr(query_json) }.to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                set_last_error(format!("literlm_list_files: query_json is not valid UTF-8: {e}"));
+                return std::ptr::null_mut();
+            }
+        };
+        match serde_json::from_str(json_str) {
+            Ok(q) => Some(q),
+            Err(e) => {
+                set_last_error(format!("literlm_list_files: failed to parse query JSON: {e}"));
+                return std::ptr::null_mut();
+            }
+        }
+    };
+
+    let rt = match runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            set_last_error(format!("literlm_list_files: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let result = rt.block_on(client_ref.list_files(query));
+
+    match result {
+        Ok(response) => match serde_json::to_string(&response) {
+            Ok(json) => match CString::new(json) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(e) => {
+                    set_last_error(format!("literlm_list_files: response JSON contained NUL byte: {e}"));
+                    std::ptr::null_mut()
+                }
+            },
+            Err(e) => {
+                set_last_error(format!("literlm_list_files: failed to serialize response: {e}"));
+                std::ptr::null_mut()
+            }
+        },
+        Err(e) => {
+            set_last_error(format!("literlm_list_files: {e}"));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Retrieve the raw content of a file (returned as base64-encoded string).
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `file_id`: NUL-terminated file ID string.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated base64-encoded string of the file
+/// content on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `file_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_file_content(client: *const LiterLmClient, file_id: *const c_char) -> *mut c_char {
+    id_request_bytes("literlm_file_content", client, file_id, "file_id", |c, id| {
+        Box::pin(c.file_content(id))
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Batch API
+// ---------------------------------------------------------------------------
+
+/// Create a new batch job.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `request_json`: NUL-terminated JSON string conforming to the
+///   `CreateBatchRequest` schema.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `BatchObject` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_create_batch(
+    client: *const LiterLmClient,
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_request_response("literlm_create_batch", client, request_json, |c, req| {
+        Box::pin(c.create_batch(req))
+    })
+}
+
+/// Retrieve a batch by ID.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `batch_id`: NUL-terminated batch ID string.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `BatchObject` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `batch_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_retrieve_batch(client: *const LiterLmClient, batch_id: *const c_char) -> *mut c_char {
+    id_request_response("literlm_retrieve_batch", client, batch_id, "batch_id", |c, id| {
+        Box::pin(c.retrieve_batch(id))
+    })
+}
+
+/// List batches, optionally filtered by query parameters.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `query_json`: NUL-terminated JSON string conforming to the
+///   `BatchListQuery` schema.  May be `NULL` to list all batches.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `BatchListResponse` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `query_json` may be `NULL` or a valid NUL-terminated UTF-8 JSON string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_list_batches(client: *const LiterLmClient, query_json: *const c_char) -> *mut c_char {
+    clear_last_error();
+
+    if client.is_null() {
+        set_last_error("literlm_list_batches: client must not be NULL".into());
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: caller guarantees `client` is non-null and valid.
+    let client_ref = unsafe { &(*client).inner };
+
+    let query: Option<liter_lm::types::batch::BatchListQuery> = if query_json.is_null() {
+        None
+    } else {
+        // SAFETY: caller guarantees `query_json` is a valid NUL-terminated string.
+        let json_str = match unsafe { CStr::from_ptr(query_json) }.to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                set_last_error(format!("literlm_list_batches: query_json is not valid UTF-8: {e}"));
+                return std::ptr::null_mut();
+            }
+        };
+        match serde_json::from_str(json_str) {
+            Ok(q) => Some(q),
+            Err(e) => {
+                set_last_error(format!("literlm_list_batches: failed to parse query JSON: {e}"));
+                return std::ptr::null_mut();
+            }
+        }
+    };
+
+    let rt = match runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            set_last_error(format!("literlm_list_batches: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let result = rt.block_on(client_ref.list_batches(query));
+
+    match result {
+        Ok(response) => match serde_json::to_string(&response) {
+            Ok(json) => match CString::new(json) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(e) => {
+                    set_last_error(format!("literlm_list_batches: response JSON contained NUL byte: {e}"));
+                    std::ptr::null_mut()
+                }
+            },
+            Err(e) => {
+                set_last_error(format!("literlm_list_batches: failed to serialize response: {e}"));
+                std::ptr::null_mut()
+            }
+        },
+        Err(e) => {
+            set_last_error(format!("literlm_list_batches: {e}"));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Cancel an in-progress batch.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `batch_id`: NUL-terminated batch ID string.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `BatchObject` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `batch_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_cancel_batch(client: *const LiterLmClient, batch_id: *const c_char) -> *mut c_char {
+    id_request_response("literlm_cancel_batch", client, batch_id, "batch_id", |c, id| {
+        Box::pin(c.cancel_batch(id))
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Responses API
+// ---------------------------------------------------------------------------
+
+/// Create a new response.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `request_json`: NUL-terminated JSON string conforming to the
+///   `CreateResponseRequest` schema.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `ResponseObject` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_create_response(
+    client: *const LiterLmClient,
+    request_json: *const c_char,
+) -> *mut c_char {
+    json_request_response("literlm_create_response", client, request_json, |c, req| {
+        Box::pin(c.create_response(req))
+    })
+}
+
+/// Retrieve a response by ID.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `response_id`: NUL-terminated response ID string.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `ResponseObject` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `response_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_retrieve_response(
+    client: *const LiterLmClient,
+    response_id: *const c_char,
+) -> *mut c_char {
+    id_request_response(
+        "literlm_retrieve_response",
+        client,
+        response_id,
+        "response_id",
+        |c, id| Box::pin(c.retrieve_response(id)),
+    )
+}
+
+/// Cancel an in-progress response.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `response_id`: NUL-terminated response ID string.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `ResponseObject` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literlm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+/// - `response_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literlm_cancel_response(
+    client: *const LiterLmClient,
+    response_id: *const c_char,
+) -> *mut c_char {
+    id_request_response(
+        "literlm_cancel_response",
+        client,
+        response_id,
+        "response_id",
+        |c, id| Box::pin(c.cancel_response(id)),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------------------
 
 /// Retrieve the last error message for the current thread.
 ///

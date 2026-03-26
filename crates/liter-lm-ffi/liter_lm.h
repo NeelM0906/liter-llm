@@ -210,6 +210,375 @@ LITER_LM_EXPORT char *literlm_embed(const LiterLmClient *client, const char *req
 LITER_LM_EXPORT char *literlm_list_models(const LiterLmClient *client);
 
 /**
+ * Generate an image from a text prompt.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `request_json`: NUL-terminated JSON string conforming to the
+ *   `CreateImageRequest` schema.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `ImagesResponse` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+ */
+LITER_LM_EXPORT char *literlm_image_generate(const LiterLmClient *client, const char *request_json);
+
+/**
+ * Generate speech audio from text.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `request_json`: NUL-terminated JSON string conforming to the
+ *   `CreateSpeechRequest` schema.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated base64-encoded string of the audio
+ * bytes on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+ */
+LITER_LM_EXPORT char *literlm_speech(const LiterLmClient *client, const char *request_json);
+
+/**
+ * Transcribe audio to text.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `request_json`: NUL-terminated JSON string conforming to the
+ *   `CreateTranscriptionRequest` schema.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `TranscriptionResponse` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+ */
+LITER_LM_EXPORT char *literlm_transcribe(const LiterLmClient *client, const char *request_json);
+
+/**
+ * Check content against moderation policies.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `request_json`: NUL-terminated JSON string conforming to the
+ *   `ModerationRequest` schema.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `ModerationResponse` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+ */
+LITER_LM_EXPORT char *literlm_moderate(const LiterLmClient *client, const char *request_json);
+
+/**
+ * Rerank documents by relevance to a query.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `request_json`: NUL-terminated JSON string conforming to the
+ *   `RerankRequest` schema.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `RerankResponse` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+ */
+LITER_LM_EXPORT char *literlm_rerank(const LiterLmClient *client, const char *request_json);
+
+/**
+ * Upload a file.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `request_json`: NUL-terminated JSON string conforming to the
+ *   `CreateFileRequest` schema.  The `file` field must be base64-encoded.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `FileObject` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+ */
+LITER_LM_EXPORT char *literlm_create_file(const LiterLmClient *client, const char *request_json);
+
+/**
+ * Retrieve metadata for a file by ID.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `file_id`: NUL-terminated file ID string.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `FileObject` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `file_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+ */
+LITER_LM_EXPORT char *literlm_retrieve_file(const LiterLmClient *client, const char *file_id);
+
+/**
+ * Delete a file by ID.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `file_id`: NUL-terminated file ID string.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `DeleteResponse` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `file_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+ */
+LITER_LM_EXPORT char *literlm_delete_file(const LiterLmClient *client, const char *file_id);
+
+/**
+ * List files, optionally filtered by query parameters.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `query_json`: NUL-terminated JSON string conforming to the
+ *   `FileListQuery` schema.  May be `NULL` to list all files.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `FileListResponse` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `query_json` may be `NULL` or a valid NUL-terminated UTF-8 JSON string.
+ */
+LITER_LM_EXPORT char *literlm_list_files(const LiterLmClient *client, const char *query_json);
+
+/**
+ * Retrieve the raw content of a file (returned as base64-encoded string).
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `file_id`: NUL-terminated file ID string.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated base64-encoded string of the file
+ * content on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `file_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+ */
+LITER_LM_EXPORT char *literlm_file_content(const LiterLmClient *client, const char *file_id);
+
+/**
+ * Create a new batch job.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `request_json`: NUL-terminated JSON string conforming to the
+ *   `CreateBatchRequest` schema.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `BatchObject` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+ */
+LITER_LM_EXPORT char *literlm_create_batch(const LiterLmClient *client, const char *request_json);
+
+/**
+ * Retrieve a batch by ID.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `batch_id`: NUL-terminated batch ID string.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `BatchObject` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `batch_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+ */
+LITER_LM_EXPORT char *literlm_retrieve_batch(const LiterLmClient *client, const char *batch_id);
+
+/**
+ * List batches, optionally filtered by query parameters.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `query_json`: NUL-terminated JSON string conforming to the
+ *   `BatchListQuery` schema.  May be `NULL` to list all batches.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `BatchListResponse` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `query_json` may be `NULL` or a valid NUL-terminated UTF-8 JSON string.
+ */
+LITER_LM_EXPORT char *literlm_list_batches(const LiterLmClient *client, const char *query_json);
+
+/**
+ * Cancel an in-progress batch.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `batch_id`: NUL-terminated batch ID string.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `BatchObject` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `batch_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+ */
+LITER_LM_EXPORT char *literlm_cancel_batch(const LiterLmClient *client, const char *batch_id);
+
+/**
+ * Create a new response.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `request_json`: NUL-terminated JSON string conforming to the
+ *   `CreateResponseRequest` schema.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `ResponseObject` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+ */
+LITER_LM_EXPORT
+char *literlm_create_response(const LiterLmClient *client, const char *request_json);
+
+/**
+ * Retrieve a response by ID.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `response_id`: NUL-terminated response ID string.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `ResponseObject` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `response_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+ */
+LITER_LM_EXPORT
+char *literlm_retrieve_response(const LiterLmClient *client, const char *response_id);
+
+/**
+ * Cancel an in-progress response.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `response_id`: NUL-terminated response ID string.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `ResponseObject` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literlm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literlm_client_new`.
+ * - `response_id` must be a valid, non-null, NUL-terminated UTF-8 string.
+ */
+LITER_LM_EXPORT char *literlm_cancel_response(const LiterLmClient *client, const char *response_id);
+
+/**
  * Retrieve the last error message for the current thread.
  *
  * Returns a `const char*` pointer to the NUL-terminated error string, or

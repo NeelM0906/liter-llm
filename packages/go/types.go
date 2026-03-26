@@ -444,3 +444,269 @@ type ModelsListResponse struct {
 	Object string        `json:"object"`
 	Data   []ModelObject `json:"data"`
 }
+
+// ─── Image Generation ─────────────────────────────────────────────────────────
+
+// CreateImageRequest is the body for an image generation API call.
+type CreateImageRequest struct {
+	Prompt         string  `json:"prompt"`
+	Model          *string `json:"model,omitempty"`
+	N              *uint32 `json:"n,omitempty"`
+	Quality        *string `json:"quality,omitempty"`
+	ResponseFormat *string `json:"response_format,omitempty"`
+	Size           *string `json:"size,omitempty"`
+	Style          *string `json:"style,omitempty"`
+	User           *string `json:"user,omitempty"`
+}
+
+// ImageData holds a single image result.
+type ImageData struct {
+	URL           *string `json:"url,omitempty"`
+	B64JSON       *string `json:"b64_json,omitempty"`
+	RevisedPrompt *string `json:"revised_prompt,omitempty"`
+}
+
+// ImagesResponse is the response body for an image generation request.
+type ImagesResponse struct {
+	Created uint64      `json:"created"`
+	Data    []ImageData `json:"data"`
+}
+
+// ─── Speech ───────────────────────────────────────────────────────────────────
+
+// CreateSpeechRequest is the body for a speech generation API call.
+type CreateSpeechRequest struct {
+	Model          string   `json:"model"`
+	Input          string   `json:"input"`
+	Voice          string   `json:"voice"`
+	ResponseFormat *string  `json:"response_format,omitempty"`
+	Speed          *float64 `json:"speed,omitempty"`
+}
+
+// ─── Transcription ────────────────────────────────────────────────────────────
+
+// CreateTranscriptionRequest is the body for an audio transcription API call.
+// The File field must be base64-encoded audio data.
+type CreateTranscriptionRequest struct {
+	File           string   `json:"file"`
+	Model          string   `json:"model"`
+	Language       *string  `json:"language,omitempty"`
+	Prompt         *string  `json:"prompt,omitempty"`
+	ResponseFormat *string  `json:"response_format,omitempty"`
+	Temperature    *float64 `json:"temperature,omitempty"`
+}
+
+// TranscriptionResponse is the response body for a transcription request.
+type TranscriptionResponse struct {
+	Text string `json:"text"`
+}
+
+// ─── Moderation ───────────────────────────────────────────────────────────────
+
+// ModerationRequest is the body for a moderation API call.
+type ModerationRequest struct {
+	Input json.RawMessage `json:"input"`
+	Model *string         `json:"model,omitempty"`
+}
+
+// ModerationCategoryScores holds per-category confidence scores.
+type ModerationCategoryScores struct {
+	Sexual           float64 `json:"sexual"`
+	Hate             float64 `json:"hate"`
+	Harassment       float64 `json:"harassment"`
+	SelfHarm         float64 `json:"self-harm"`
+	Violence         float64 `json:"violence"`
+	SexualMinors     float64 `json:"sexual/minors"`
+	HateThreatening  float64 `json:"hate/threatening"`
+	ViolenceGraphic  float64 `json:"violence/graphic"`
+	SelfHarmIntent   float64 `json:"self-harm/intent"`
+	SelfHarmInstr    float64 `json:"self-harm/instructions"`
+	HarassmentThreat float64 `json:"harassment/threatening"`
+}
+
+// ModerationCategories holds per-category boolean flags.
+type ModerationCategories struct {
+	Sexual           bool `json:"sexual"`
+	Hate             bool `json:"hate"`
+	Harassment       bool `json:"harassment"`
+	SelfHarm         bool `json:"self-harm"`
+	Violence         bool `json:"violence"`
+	SexualMinors     bool `json:"sexual/minors"`
+	HateThreatening  bool `json:"hate/threatening"`
+	ViolenceGraphic  bool `json:"violence/graphic"`
+	SelfHarmIntent   bool `json:"self-harm/intent"`
+	SelfHarmInstr    bool `json:"self-harm/instructions"`
+	HarassmentThreat bool `json:"harassment/threatening"`
+}
+
+// ModerationResult holds the result for a single input.
+type ModerationResult struct {
+	Flagged        bool                     `json:"flagged"`
+	Categories     ModerationCategories     `json:"categories"`
+	CategoryScores ModerationCategoryScores `json:"category_scores"`
+}
+
+// ModerationResponse is the response body for a moderation request.
+type ModerationResponse struct {
+	ID      string             `json:"id"`
+	Model   string             `json:"model"`
+	Results []ModerationResult `json:"results"`
+}
+
+// ─── Rerank ───────────────────────────────────────────────────────────────────
+
+// RerankRequest is the body for a rerank API call.
+type RerankRequest struct {
+	Model     string          `json:"model"`
+	Query     string          `json:"query"`
+	Documents json.RawMessage `json:"documents"`
+	TopN      *uint32         `json:"top_n,omitempty"`
+}
+
+// RerankResult holds a single reranked document result.
+type RerankResult struct {
+	Index          uint32  `json:"index"`
+	RelevanceScore float64 `json:"relevance_score"`
+}
+
+// RerankResponse is the response body for a rerank request.
+type RerankResponse struct {
+	Results []RerankResult `json:"results"`
+	Model   string         `json:"model"`
+	Usage   *Usage         `json:"usage,omitempty"`
+}
+
+// ─── Files ────────────────────────────────────────────────────────────────────
+
+// FilePurpose enumerates the valid values for file upload purpose.
+type FilePurpose string
+
+const (
+	FilePurposeAssistants FilePurpose = "assistants"
+	FilePurposeFineTune   FilePurpose = "fine-tune"
+	FilePurposeBatch      FilePurpose = "batch"
+	FilePurposeVision     FilePurpose = "vision"
+	FilePurposeUserData   FilePurpose = "user_data"
+	FilePurposeEvals      FilePurpose = "evals"
+	FilePurposeResponses  FilePurpose = "responses"
+)
+
+// CreateFileRequest is the body for a file upload API call.
+// The File field must be base64-encoded file data.
+type CreateFileRequest struct {
+	File     string      `json:"file"`
+	Purpose  FilePurpose `json:"purpose"`
+	Filename *string     `json:"filename,omitempty"`
+}
+
+// FileObject describes a file that has been uploaded.
+type FileObject struct {
+	ID            string `json:"id"`
+	Object        string `json:"object"`
+	Bytes         uint64 `json:"bytes"`
+	CreatedAt     uint64 `json:"created_at"`
+	Filename      string `json:"filename"`
+	Purpose       string `json:"purpose"`
+	Status        string `json:"status,omitempty"`
+	StatusDetails string `json:"status_details,omitempty"`
+}
+
+// DeleteResponse is the response body for a delete operation.
+type DeleteResponse struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Deleted bool   `json:"deleted"`
+}
+
+// FileListQuery holds optional query parameters for listing files.
+type FileListQuery struct {
+	Purpose *string `json:"purpose,omitempty"`
+	Limit   *uint32 `json:"limit,omitempty"`
+	After   *string `json:"after,omitempty"`
+}
+
+// FileListResponse is the response body for listing files.
+type FileListResponse struct {
+	Object string       `json:"object"`
+	Data   []FileObject `json:"data"`
+}
+
+// ─── Batches ──────────────────────────────────────────────────────────────────
+
+// CreateBatchRequest is the body for creating a batch job.
+type CreateBatchRequest struct {
+	InputFileID      string            `json:"input_file_id"`
+	Endpoint         string            `json:"endpoint"`
+	CompletionWindow string            `json:"completion_window"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
+}
+
+// BatchRequestCounts holds counts for a batch job.
+type BatchRequestCounts struct {
+	Total     uint64 `json:"total"`
+	Completed uint64 `json:"completed"`
+	Failed    uint64 `json:"failed"`
+}
+
+// BatchObject describes a batch processing job.
+type BatchObject struct {
+	ID               string              `json:"id"`
+	Object           string              `json:"object"`
+	Endpoint         string              `json:"endpoint"`
+	InputFileID      string              `json:"input_file_id"`
+	CompletionWindow string              `json:"completion_window"`
+	Status           string              `json:"status"`
+	OutputFileID     *string             `json:"output_file_id,omitempty"`
+	ErrorFileID      *string             `json:"error_file_id,omitempty"`
+	CreatedAt        uint64              `json:"created_at"`
+	InProgressAt     *uint64             `json:"in_progress_at,omitempty"`
+	ExpiresAt        *uint64             `json:"expires_at,omitempty"`
+	FinalizingAt     *uint64             `json:"finalizing_at,omitempty"`
+	CompletedAt      *uint64             `json:"completed_at,omitempty"`
+	FailedAt         *uint64             `json:"failed_at,omitempty"`
+	ExpiredAt        *uint64             `json:"expired_at,omitempty"`
+	CancellingAt     *uint64             `json:"cancelling_at,omitempty"` //nolint:misspell // OpenAI API field name
+	CancelledAt      *uint64             `json:"cancelled_at,omitempty"`  //nolint:misspell // OpenAI API field name
+	RequestCounts    *BatchRequestCounts `json:"request_counts,omitempty"`
+	Metadata         map[string]string   `json:"metadata,omitempty"`
+}
+
+// BatchListQuery holds optional query parameters for listing batches.
+type BatchListQuery struct {
+	Limit *uint32 `json:"limit,omitempty"`
+	After *string `json:"after,omitempty"`
+}
+
+// BatchListResponse is the response body for listing batches.
+type BatchListResponse struct {
+	Object string        `json:"object"`
+	Data   []BatchObject `json:"data"`
+}
+
+// ─── Responses ────────────────────────────────────────────────────────────────
+
+// CreateResponseRequest is the body for creating a response via the
+// Responses API.
+type CreateResponseRequest struct {
+	Model        string            `json:"model"`
+	Input        json.RawMessage   `json:"input"`
+	Instructions *string           `json:"instructions,omitempty"`
+	MaxTokens    *uint64           `json:"max_output_tokens,omitempty"`
+	Temperature  *float64          `json:"temperature,omitempty"`
+	TopP         *float64          `json:"top_p,omitempty"`
+	Stream       *bool             `json:"stream,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
+// ResponseObject describes a response from the Responses API.
+type ResponseObject struct {
+	ID        string            `json:"id"`
+	Object    string            `json:"object"`
+	CreatedAt uint64            `json:"created_at"`
+	Status    string            `json:"status"`
+	Model     string            `json:"model"`
+	Output    json.RawMessage   `json:"output,omitempty"`
+	Usage     *Usage            `json:"usage,omitempty"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
+	Error     json.RawMessage   `json:"error,omitempty"`
+}

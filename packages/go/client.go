@@ -40,6 +40,57 @@ type LlmClient interface {
 	// ListModels returns the list of models available via the configured
 	// provider endpoint.
 	ListModels(ctx context.Context) (*ModelsListResponse, error)
+
+	// ImageGenerate generates an image from a text prompt.
+	ImageGenerate(ctx context.Context, req *CreateImageRequest) (*ImagesResponse, error)
+
+	// Speech generates audio speech from text, returning raw audio bytes.
+	Speech(ctx context.Context, req *CreateSpeechRequest) ([]byte, error)
+
+	// Transcribe transcribes audio to text.
+	Transcribe(ctx context.Context, req *CreateTranscriptionRequest) (*TranscriptionResponse, error)
+
+	// Moderate checks content against moderation policies.
+	Moderate(ctx context.Context, req *ModerationRequest) (*ModerationResponse, error)
+
+	// Rerank reranks documents by relevance to a query.
+	Rerank(ctx context.Context, req *RerankRequest) (*RerankResponse, error)
+
+	// CreateFile uploads a file.
+	CreateFile(ctx context.Context, req *CreateFileRequest) (*FileObject, error)
+
+	// RetrieveFile retrieves metadata for a file by ID.
+	RetrieveFile(ctx context.Context, fileID string) (*FileObject, error)
+
+	// DeleteFile deletes a file by ID.
+	DeleteFile(ctx context.Context, fileID string) (*DeleteResponse, error)
+
+	// ListFiles lists files, optionally filtered by query parameters.
+	ListFiles(ctx context.Context, query *FileListQuery) (*FileListResponse, error)
+
+	// FileContent retrieves the raw content of a file.
+	FileContent(ctx context.Context, fileID string) ([]byte, error)
+
+	// CreateBatch creates a new batch job.
+	CreateBatch(ctx context.Context, req *CreateBatchRequest) (*BatchObject, error)
+
+	// RetrieveBatch retrieves a batch by ID.
+	RetrieveBatch(ctx context.Context, batchID string) (*BatchObject, error)
+
+	// ListBatches lists batches, optionally filtered by query parameters.
+	ListBatches(ctx context.Context, query *BatchListQuery) (*BatchListResponse, error)
+
+	// CancelBatch cancels an in-progress batch.
+	CancelBatch(ctx context.Context, batchID string) (*BatchObject, error)
+
+	// CreateResponse creates a new response via the Responses API.
+	CreateResponse(ctx context.Context, req *CreateResponseRequest) (*ResponseObject, error)
+
+	// RetrieveResponse retrieves a response by ID.
+	RetrieveResponse(ctx context.Context, responseID string) (*ResponseObject, error)
+
+	// CancelResponse cancels an in-progress response.
+	CancelResponse(ctx context.Context, responseID string) (*ResponseObject, error)
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -375,6 +426,517 @@ func (c *Client) ListModels(ctx context.Context) (*ModelsListResponse, error) {
 	var result ModelsListResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("literlm: decode models response: %w", err)
+	}
+	return &result, nil
+}
+
+// ─── Image Generate ───────────────────────────────────────────────────────────
+
+// ImageGenerate sends an image generation request and returns the response.
+func (c *Client) ImageGenerate(ctx context.Context, req *CreateImageRequest) (*ImagesResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request must not be nil", ErrInvalidRequest)
+	}
+	if req.Prompt == "" {
+		return nil, fmt.Errorf("%w: prompt is required", ErrInvalidRequest)
+	}
+
+	body, err := marshalBody(req)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodPost, "/images/generations", body, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result ImagesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode image response: %w", err)
+	}
+	return &result, nil
+}
+
+// ─── Speech ───────────────────────────────────────────────────────────────────
+
+// Speech generates audio from text and returns raw audio bytes.
+func (c *Client) Speech(ctx context.Context, req *CreateSpeechRequest) ([]byte, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request must not be nil", ErrInvalidRequest)
+	}
+	if req.Model == "" {
+		return nil, fmt.Errorf("%w: model is required", ErrInvalidRequest)
+	}
+	if req.Input == "" {
+		return nil, fmt.Errorf("%w: input is required", ErrInvalidRequest)
+	}
+	if req.Voice == "" {
+		return nil, fmt.Errorf("%w: voice is required", ErrInvalidRequest)
+	}
+
+	body, err := marshalBody(req)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodPost, "/audio/speech", body, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("literlm: read speech response: %w", err)
+	}
+	return data, nil
+}
+
+// ─── Transcribe ───────────────────────────────────────────────────────────────
+
+// Transcribe sends a transcription request and returns the response.
+func (c *Client) Transcribe(ctx context.Context, req *CreateTranscriptionRequest) (*TranscriptionResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request must not be nil", ErrInvalidRequest)
+	}
+	if req.Model == "" {
+		return nil, fmt.Errorf("%w: model is required", ErrInvalidRequest)
+	}
+
+	body, err := marshalBody(req)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodPost, "/audio/transcriptions", body, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result TranscriptionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode transcription response: %w", err)
+	}
+	return &result, nil
+}
+
+// ─── Moderate ─────────────────────────────────────────────────────────────────
+
+// Moderate checks content against moderation policies.
+func (c *Client) Moderate(ctx context.Context, req *ModerationRequest) (*ModerationResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request must not be nil", ErrInvalidRequest)
+	}
+
+	body, err := marshalBody(req)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodPost, "/moderations", body, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result ModerationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode moderation response: %w", err)
+	}
+	return &result, nil
+}
+
+// ─── Rerank ───────────────────────────────────────────────────────────────────
+
+// Rerank reranks documents by relevance to a query.
+func (c *Client) Rerank(ctx context.Context, req *RerankRequest) (*RerankResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request must not be nil", ErrInvalidRequest)
+	}
+	if req.Model == "" {
+		return nil, fmt.Errorf("%w: model is required", ErrInvalidRequest)
+	}
+	if req.Query == "" {
+		return nil, fmt.Errorf("%w: query is required", ErrInvalidRequest)
+	}
+
+	body, err := marshalBody(req)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodPost, "/rerank", body, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result RerankResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode rerank response: %w", err)
+	}
+	return &result, nil
+}
+
+// ─── File Management ──────────────────────────────────────────────────────────
+
+// CreateFile uploads a file.
+func (c *Client) CreateFile(ctx context.Context, req *CreateFileRequest) (*FileObject, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request must not be nil", ErrInvalidRequest)
+	}
+
+	body, err := marshalBody(req)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodPost, "/files", body, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result FileObject
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode file response: %w", err)
+	}
+	return &result, nil
+}
+
+// RetrieveFile retrieves metadata for a file by ID.
+func (c *Client) RetrieveFile(ctx context.Context, fileID string) (*FileObject, error) {
+	if fileID == "" {
+		return nil, fmt.Errorf("%w: file_id is required", ErrInvalidRequest)
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodGet, "/files/"+fileID, nil, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result FileObject
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode file response: %w", err)
+	}
+	return &result, nil
+}
+
+// DeleteFile deletes a file by ID.
+func (c *Client) DeleteFile(ctx context.Context, fileID string) (*DeleteResponse, error) {
+	if fileID == "" {
+		return nil, fmt.Errorf("%w: file_id is required", ErrInvalidRequest)
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodDelete, "/files/"+fileID, nil, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result DeleteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode delete response: %w", err)
+	}
+	return &result, nil
+}
+
+// ListFiles lists files, optionally filtered by query parameters.
+func (c *Client) ListFiles(ctx context.Context, query *FileListQuery) (*FileListResponse, error) {
+	path := "/files"
+	if query != nil {
+		var params []string
+		if query.Purpose != nil {
+			params = append(params, "purpose="+*query.Purpose)
+		}
+		if query.Limit != nil {
+			params = append(params, fmt.Sprintf("limit=%d", *query.Limit))
+		}
+		if query.After != nil {
+			params = append(params, "after="+*query.After)
+		}
+		if len(params) > 0 {
+			path += "?" + strings.Join(params, "&")
+		}
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodGet, path, nil, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result FileListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode file list response: %w", err)
+	}
+	return &result, nil
+}
+
+// FileContent retrieves the raw content of a file.
+func (c *Client) FileContent(ctx context.Context, fileID string) ([]byte, error) {
+	if fileID == "" {
+		return nil, fmt.Errorf("%w: file_id is required", ErrInvalidRequest)
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodGet, "/files/"+fileID+"/content", nil, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("literlm: read file content: %w", err)
+	}
+	return data, nil
+}
+
+// ─── Batch Management ─────────────────────────────────────────────────────────
+
+// CreateBatch creates a new batch job.
+func (c *Client) CreateBatch(ctx context.Context, req *CreateBatchRequest) (*BatchObject, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request must not be nil", ErrInvalidRequest)
+	}
+
+	body, err := marshalBody(req)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodPost, "/batches", body, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result BatchObject
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode batch response: %w", err)
+	}
+	return &result, nil
+}
+
+// RetrieveBatch retrieves a batch by ID.
+func (c *Client) RetrieveBatch(ctx context.Context, batchID string) (*BatchObject, error) {
+	if batchID == "" {
+		return nil, fmt.Errorf("%w: batch_id is required", ErrInvalidRequest)
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodGet, "/batches/"+batchID, nil, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result BatchObject
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode batch response: %w", err)
+	}
+	return &result, nil
+}
+
+// ListBatches lists batches, optionally filtered by query parameters.
+func (c *Client) ListBatches(ctx context.Context, query *BatchListQuery) (*BatchListResponse, error) {
+	path := "/batches"
+	if query != nil {
+		var params []string
+		if query.Limit != nil {
+			params = append(params, fmt.Sprintf("limit=%d", *query.Limit))
+		}
+		if query.After != nil {
+			params = append(params, "after="+*query.After)
+		}
+		if len(params) > 0 {
+			path += "?" + strings.Join(params, "&")
+		}
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodGet, path, nil, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result BatchListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode batch list response: %w", err)
+	}
+	return &result, nil
+}
+
+// CancelBatch cancels an in-progress batch.
+func (c *Client) CancelBatch(ctx context.Context, batchID string) (*BatchObject, error) {
+	if batchID == "" {
+		return nil, fmt.Errorf("%w: batch_id is required", ErrInvalidRequest)
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodPost, "/batches/"+batchID+"/cancel", nil, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result BatchObject
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode batch response: %w", err)
+	}
+	return &result, nil
+}
+
+// ─── Responses API ────────────────────────────────────────────────────────────
+
+// CreateResponse creates a new response via the Responses API.
+func (c *Client) CreateResponse(ctx context.Context, req *CreateResponseRequest) (*ResponseObject, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request must not be nil", ErrInvalidRequest)
+	}
+	if req.Model == "" {
+		return nil, fmt.Errorf("%w: model is required", ErrInvalidRequest)
+	}
+
+	body, err := marshalBody(req)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodPost, "/responses", body, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result ResponseObject
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode response: %w", err)
+	}
+	return &result, nil
+}
+
+// RetrieveResponse retrieves a response by ID.
+func (c *Client) RetrieveResponse(ctx context.Context, responseID string) (*ResponseObject, error) {
+	if responseID == "" {
+		return nil, fmt.Errorf("%w: response_id is required", ErrInvalidRequest)
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodGet, "/responses/"+responseID, nil, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result ResponseObject
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode response: %w", err)
+	}
+	return &result, nil
+}
+
+// CancelResponse cancels an in-progress response.
+func (c *Client) CancelResponse(ctx context.Context, responseID string) (*ResponseObject, error) {
+	if responseID == "" {
+		return nil, fmt.Errorf("%w: response_id is required", ErrInvalidRequest)
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodPost, "/responses/"+responseID+"/cancel", nil, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result ResponseObject
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("literlm: decode response: %w", err)
 	}
 	return &result, nil
 }

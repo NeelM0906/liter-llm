@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use liter_lm::{ClientConfigBuilder, DefaultClient, LlmClient};
+use liter_lm::{BatchClient, ClientConfigBuilder, DefaultClient, FileClient, LlmClient, ResponseClient};
 use pyo3::exceptions::{PyStopAsyncIteration, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -11,7 +11,10 @@ use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::error::to_py_err;
-use crate::types::{PyChatCompletionChunk, PyChatCompletionResponse, PyEmbeddingResponse, PyModelsListResponse};
+use crate::types::{
+    PyChatCompletionChunk, PyChatCompletionResponse, PyEmbeddingResponse, PyImagesResponse, PyModelsListResponse,
+    PyModerationResponse, PyRerankResponse, PyTranscriptionResponse, to_json_value,
+};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -246,6 +249,306 @@ impl PyLlmClient {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let resp = client.list_models().await.map_err(to_py_err)?;
             Ok(PyModelsListResponse::from(resp))
+        })
+    }
+
+    // ─── Additional inference methods ────────────────────────────────────────
+
+    /// Generate images from a text prompt (async).
+    ///
+    /// Accepts the same keyword arguments as the OpenAI Images API.
+    /// Returns a coroutine that resolves to an ``ImagesResponse``.
+    #[pyo3(signature = (**kwargs))]
+    fn image_generate<'py>(&self, py: Python<'py>, kwargs: Option<Bound<'py, PyDict>>) -> PyResult<Bound<'py, PyAny>> {
+        let dict =
+            kwargs.ok_or_else(|| PyValueError::new_err("image_generate() requires keyword arguments (prompt, ...)"))?;
+        let value = kwargs_to_json(&dict)?;
+        let req: liter_lm::CreateImageRequest =
+            serde_json::from_value(value).map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.image_generate(req).await.map_err(to_py_err)?;
+            Ok(PyImagesResponse::from(resp))
+        })
+    }
+
+    /// Generate speech audio from text (async).
+    ///
+    /// Accepts the same keyword arguments as the OpenAI Audio Speech API.
+    /// Returns a coroutine that resolves to ``bytes`` containing the audio data.
+    #[pyo3(signature = (**kwargs))]
+    fn speech<'py>(&self, py: Python<'py>, kwargs: Option<Bound<'py, PyDict>>) -> PyResult<Bound<'py, PyAny>> {
+        let dict = kwargs
+            .ok_or_else(|| PyValueError::new_err("speech() requires keyword arguments (model, input, voice, ...)"))?;
+        let value = kwargs_to_json(&dict)?;
+        let req: liter_lm::CreateSpeechRequest =
+            serde_json::from_value(value).map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.speech(req).await.map_err(to_py_err)?;
+            Ok(resp.to_vec())
+        })
+    }
+
+    /// Transcribe audio into text (async).
+    ///
+    /// Accepts the same keyword arguments as the OpenAI Audio Transcription API.
+    /// Returns a coroutine that resolves to a ``TranscriptionResponse``.
+    #[pyo3(signature = (**kwargs))]
+    fn transcribe<'py>(&self, py: Python<'py>, kwargs: Option<Bound<'py, PyDict>>) -> PyResult<Bound<'py, PyAny>> {
+        let dict = kwargs
+            .ok_or_else(|| PyValueError::new_err("transcribe() requires keyword arguments (model, file, ...)"))?;
+        let value = kwargs_to_json(&dict)?;
+        let req: liter_lm::CreateTranscriptionRequest =
+            serde_json::from_value(value).map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.transcribe(req).await.map_err(to_py_err)?;
+            Ok(PyTranscriptionResponse::from(resp))
+        })
+    }
+
+    /// Classify content for policy violations (async).
+    ///
+    /// Accepts the same keyword arguments as the OpenAI Moderations API.
+    /// Returns a coroutine that resolves to a ``ModerationResponse``.
+    #[pyo3(signature = (**kwargs))]
+    fn moderate<'py>(&self, py: Python<'py>, kwargs: Option<Bound<'py, PyDict>>) -> PyResult<Bound<'py, PyAny>> {
+        let dict = kwargs.ok_or_else(|| PyValueError::new_err("moderate() requires keyword arguments (input, ...)"))?;
+        let value = kwargs_to_json(&dict)?;
+        let req: liter_lm::ModerationRequest =
+            serde_json::from_value(value).map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.moderate(req).await.map_err(to_py_err)?;
+            Ok(PyModerationResponse::from(resp))
+        })
+    }
+
+    /// Rerank documents by relevance to a query (async).
+    ///
+    /// Accepts the same keyword arguments as the Cohere/Jina rerank API.
+    /// Returns a coroutine that resolves to a ``RerankResponse``.
+    #[pyo3(signature = (**kwargs))]
+    fn rerank<'py>(&self, py: Python<'py>, kwargs: Option<Bound<'py, PyDict>>) -> PyResult<Bound<'py, PyAny>> {
+        let dict = kwargs.ok_or_else(|| {
+            PyValueError::new_err("rerank() requires keyword arguments (model, query, documents, ...)")
+        })?;
+        let value = kwargs_to_json(&dict)?;
+        let req: liter_lm::RerankRequest =
+            serde_json::from_value(value).map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.rerank(req).await.map_err(to_py_err)?;
+            Ok(PyRerankResponse::from(resp))
+        })
+    }
+
+    // ─── File management methods ─────────────────────────────────────────────
+
+    /// Upload a file (async).
+    ///
+    /// Returns a coroutine that resolves to a ``dict`` with file object fields.
+    #[pyo3(signature = (**kwargs))]
+    fn create_file<'py>(&self, py: Python<'py>, kwargs: Option<Bound<'py, PyDict>>) -> PyResult<Bound<'py, PyAny>> {
+        let dict = kwargs
+            .ok_or_else(|| PyValueError::new_err("create_file() requires keyword arguments (file, purpose, ...)"))?;
+        let value = kwargs_to_json(&dict)?;
+        let req: liter_lm::CreateFileRequest =
+            serde_json::from_value(value).map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.create_file(req).await.map_err(to_py_err)?;
+            to_json_value(&resp)
+        })
+    }
+
+    /// Retrieve metadata about an uploaded file (async).
+    ///
+    /// Args:
+    ///     file_id: The ID of the file to retrieve.
+    ///
+    /// Returns a coroutine that resolves to a ``dict`` with file object fields.
+    fn retrieve_file<'py>(&self, py: Python<'py>, file_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.retrieve_file(&file_id).await.map_err(to_py_err)?;
+            to_json_value(&resp)
+        })
+    }
+
+    /// Delete an uploaded file (async).
+    ///
+    /// Args:
+    ///     file_id: The ID of the file to delete.
+    ///
+    /// Returns a coroutine that resolves to a ``dict`` with deletion status.
+    fn delete_file<'py>(&self, py: Python<'py>, file_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.delete_file(&file_id).await.map_err(to_py_err)?;
+            to_json_value(&resp)
+        })
+    }
+
+    /// List uploaded files (async).
+    ///
+    /// Optional keyword arguments: ``purpose``, ``limit``, ``after``.
+    /// Returns a coroutine that resolves to a ``dict`` with a ``data`` list.
+    #[pyo3(signature = (**kwargs))]
+    fn list_files<'py>(&self, py: Python<'py>, kwargs: Option<Bound<'py, PyDict>>) -> PyResult<Bound<'py, PyAny>> {
+        let query: Option<liter_lm::FileListQuery> = match kwargs {
+            Some(ref dict) if !dict.is_empty() => {
+                let value = kwargs_to_json(dict)?;
+                Some(serde_json::from_value(value).map_err(|e| PyValueError::new_err(e.to_string()))?)
+            }
+            _ => None,
+        };
+
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.list_files(query).await.map_err(to_py_err)?;
+            to_json_value(&resp)
+        })
+    }
+
+    /// Download the content of an uploaded file (async).
+    ///
+    /// Args:
+    ///     file_id: The ID of the file whose content to download.
+    ///
+    /// Returns a coroutine that resolves to ``bytes``.
+    fn file_content<'py>(&self, py: Python<'py>, file_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.file_content(&file_id).await.map_err(to_py_err)?;
+            Ok(resp.to_vec())
+        })
+    }
+
+    // ─── Batch management methods ────────────────────────────────────────────
+
+    /// Create a new batch (async).
+    ///
+    /// Returns a coroutine that resolves to a ``dict`` with batch object fields.
+    #[pyo3(signature = (**kwargs))]
+    fn create_batch<'py>(&self, py: Python<'py>, kwargs: Option<Bound<'py, PyDict>>) -> PyResult<Bound<'py, PyAny>> {
+        let dict = kwargs.ok_or_else(|| {
+            PyValueError::new_err(
+                "create_batch() requires keyword arguments (input_file_id, endpoint, completion_window, ...)",
+            )
+        })?;
+        let value = kwargs_to_json(&dict)?;
+        let req: liter_lm::CreateBatchRequest =
+            serde_json::from_value(value).map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.create_batch(req).await.map_err(to_py_err)?;
+            to_json_value(&resp)
+        })
+    }
+
+    /// Retrieve a batch by ID (async).
+    ///
+    /// Args:
+    ///     batch_id: The ID of the batch to retrieve.
+    ///
+    /// Returns a coroutine that resolves to a ``dict`` with batch object fields.
+    fn retrieve_batch<'py>(&self, py: Python<'py>, batch_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.retrieve_batch(&batch_id).await.map_err(to_py_err)?;
+            to_json_value(&resp)
+        })
+    }
+
+    /// List batches (async).
+    ///
+    /// Optional keyword arguments: ``limit``, ``after``.
+    /// Returns a coroutine that resolves to a ``dict`` with a ``data`` list.
+    #[pyo3(signature = (**kwargs))]
+    fn list_batches<'py>(&self, py: Python<'py>, kwargs: Option<Bound<'py, PyDict>>) -> PyResult<Bound<'py, PyAny>> {
+        let query: Option<liter_lm::BatchListQuery> = match kwargs {
+            Some(ref dict) if !dict.is_empty() => {
+                let value = kwargs_to_json(dict)?;
+                Some(serde_json::from_value(value).map_err(|e| PyValueError::new_err(e.to_string()))?)
+            }
+            _ => None,
+        };
+
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.list_batches(query).await.map_err(to_py_err)?;
+            to_json_value(&resp)
+        })
+    }
+
+    /// Cancel a batch (async).
+    ///
+    /// Args:
+    ///     batch_id: The ID of the batch to cancel.
+    ///
+    /// Returns a coroutine that resolves to a ``dict`` with batch object fields.
+    fn cancel_batch<'py>(&self, py: Python<'py>, batch_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.cancel_batch(&batch_id).await.map_err(to_py_err)?;
+            to_json_value(&resp)
+        })
+    }
+
+    // ─── Response management methods ─────────────────────────────────────────
+
+    /// Create a new response (async).
+    ///
+    /// Returns a coroutine that resolves to a ``dict`` with response object fields.
+    #[pyo3(signature = (**kwargs))]
+    fn create_response<'py>(&self, py: Python<'py>, kwargs: Option<Bound<'py, PyDict>>) -> PyResult<Bound<'py, PyAny>> {
+        let dict = kwargs
+            .ok_or_else(|| PyValueError::new_err("create_response() requires keyword arguments (model, input, ...)"))?;
+        let value = kwargs_to_json(&dict)?;
+        let req: liter_lm::CreateResponseRequest =
+            serde_json::from_value(value).map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.create_response(req).await.map_err(to_py_err)?;
+            to_json_value(&resp)
+        })
+    }
+
+    /// Retrieve a response by ID (async).
+    ///
+    /// Args:
+    ///     response_id: The ID of the response to retrieve.
+    ///
+    /// Returns a coroutine that resolves to a ``dict`` with response object fields.
+    fn retrieve_response<'py>(&self, py: Python<'py>, response_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.retrieve_response(&response_id).await.map_err(to_py_err)?;
+            to_json_value(&resp)
+        })
+    }
+
+    /// Cancel a response (async).
+    ///
+    /// Args:
+    ///     response_id: The ID of the response to cancel.
+    ///
+    /// Returns a coroutine that resolves to a ``dict`` with response object fields.
+    fn cancel_response<'py>(&self, py: Python<'py>, response_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.cancel_response(&response_id).await.map_err(to_py_err)?;
+            to_json_value(&resp)
         })
     }
 

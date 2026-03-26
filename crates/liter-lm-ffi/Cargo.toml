@@ -17,8 +17,11 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 default = []
 
 [dependencies]
+base64.workspace = true
+bytes.workspace = true
 futures-core.workspace = true
 liter-lm = { path = "../liter-lm" }
+serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
