@@ -70,18 +70,19 @@ where
 
     fn call(&mut self, req: LlmRequest) -> Self::Future {
         let operation_name = req.operation_name();
-        let model = req.model().unwrap_or("").to_owned();
-        // Extract provider prefix from "provider/model-name" convention.
-        let system = model
-            .split_once('/')
-            .map(|(prefix, _)| prefix.to_owned())
-            .unwrap_or_default();
+        // Borrow the model string from the request; split_once gives a &str
+        // slice so we avoid an extra allocation for the provider prefix.
+        let model_str = req.model().unwrap_or("");
+        let system = model_str.split_once('/').map_or("", |(prefix, _)| prefix);
+        // Clone once so the span owns the string values (required by tracing
+        // macros, which store field values inside the span).
+        let model = model_str.to_owned();
 
         let span = tracing::info_span!(
             "gen_ai",
             gen_ai.operation.name = operation_name,
             gen_ai.request.model = %model,
-            gen_ai.system = %system,
+            gen_ai.system = system,
             gen_ai.usage.input_tokens = tracing::field::Empty,
             gen_ai.usage.output_tokens = tracing::field::Empty,
             gen_ai.response.id = tracing::field::Empty,
@@ -170,8 +171,13 @@ fn finish_reasons_str(reasons: &[Option<&FinishReason>]) -> String {
     reasons
         .iter()
         .filter_map(|r| r.map(finish_reason_name))
-        .collect::<Vec<_>>()
-        .join(" ")
+        .fold(String::new(), |mut acc, name| {
+            if !acc.is_empty() {
+                acc.push(' ');
+            }
+            acc.push_str(name);
+            acc
+        })
 }
 
 /// Map a [`FinishReason`] variant to its GenAI semantic convention string.

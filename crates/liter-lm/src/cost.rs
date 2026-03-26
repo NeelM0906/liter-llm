@@ -27,8 +27,19 @@ use serde::Deserialize;
 // file-system dependency.
 const PRICING_JSON: &str = include_str!("../../../schemas/pricing.json");
 
-static PRICING: LazyLock<PricingRegistry> =
-    LazyLock::new(|| serde_json::from_str(PRICING_JSON).expect("embedded schemas/pricing.json must be valid JSON"));
+/// Lazy-initialised registry parsed from the embedded JSON.
+/// Stores a `Result` so that parse failures surface at call time rather than
+/// panicking the process (mirrors the pattern used in `provider/mod.rs`).
+static PRICING: LazyLock<std::result::Result<PricingRegistry, String>> =
+    LazyLock::new(|| serde_json::from_str(PRICING_JSON).map_err(|e| e.to_string()));
+
+/// Access the pricing registry, returning `None` if the embedded JSON was invalid.
+///
+/// Invalid embedded JSON is a compile-time defect; callers treat it the same
+/// as an unknown model (no pricing available).
+fn pricing() -> Option<&'static PricingRegistry> {
+    PRICING.as_ref().ok()
+}
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
@@ -65,7 +76,7 @@ pub struct ModelPricing {
 /// ```
 #[must_use]
 pub fn completion_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) -> Option<f64> {
-    let pricing = PRICING.models.get(model)?;
+    let pricing = pricing()?.models.get(model)?;
     Some(
         (prompt_tokens as f64) * pricing.input_cost_per_token
             + (completion_tokens as f64) * pricing.output_cost_per_token,
@@ -78,7 +89,7 @@ pub fn completion_cost(model: &str, prompt_tokens: u64, completion_tokens: u64) 
 /// The returned reference is valid for the lifetime of the process (`'static`).
 #[must_use]
 pub fn model_pricing(model: &str) -> Option<&'static ModelPricing> {
-    PRICING.models.get(model)
+    pricing()?.models.get(model)
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -147,7 +158,11 @@ mod tests {
 
     #[test]
     fn pricing_registry_embedded_json_is_valid() {
-        // If LazyLock initialization would panic, this test surfaces the error.
-        let _ = model_pricing("gpt-4o");
+        // Confirm the embedded JSON parses correctly — PRICING holds Ok(...).
+        assert!(
+            PRICING.as_ref().is_ok(),
+            "embedded schemas/pricing.json failed to parse: {:?}",
+            PRICING.as_ref().err()
+        );
     }
 }

@@ -67,8 +67,8 @@ impl Provider for VertexAiProvider {
 
     /// Build the full URL for a Gemini API request.
     ///
-    /// Chat completions → `{base}/models/{model}:generateContent`
-    /// Embeddings       → `{base}/models/{model}:predict`
+    /// Chat completions → `{base}/publishers/google/models/{model}:generateContent`
+    /// Embeddings       → `{base}/publishers/google/models/{model}:predict`
     /// Other paths      → `{base}{endpoint_path}`
     fn build_url(&self, endpoint_path: &str, model: &str) -> String {
         let base = self.base_url();
@@ -78,9 +78,9 @@ impl Provider for VertexAiProvider {
         }
         let base = base.trim_end_matches('/');
         if endpoint_path.contains("chat/completions") {
-            format!("{base}/models/{model}:generateContent")
+            format!("{base}/publishers/google/models/{model}:generateContent")
         } else if endpoint_path.contains("embeddings") {
-            format!("{base}/models/{model}:predict")
+            format!("{base}/publishers/google/models/{model}:predict")
         } else {
             format!("{base}{endpoint_path}")
         }
@@ -155,11 +155,10 @@ impl Provider for VertexAiProvider {
                 }
                 "tool" => {
                     // Map tool result back to a user turn with a functionResponse part.
-                    let name = msg
-                        .get("name")
-                        .or_else(|| msg.get("tool_call_id"))
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("tool");
+                    // Gemini requires the function name — use the `name` field only.
+                    // The `tool_call_id` is an OpenAI correlation ID, not a function name,
+                    // so we must not fall back to it.
+                    let name = msg.get("name").and_then(|n| n.as_str()).unwrap_or("tool");
                     let result_content = content.cloned().unwrap_or(json!(null));
                     contents.push(json!({
                         "role": "user",
@@ -177,7 +176,8 @@ impl Provider for VertexAiProvider {
 
         // Build generationConfig from OpenAI parameters.
         let mut gen_config = json!({});
-        if let Some(max_tokens) = body.get("max_tokens") {
+        // Support both max_tokens (legacy) and max_completion_tokens (newer OpenAI spec).
+        if let Some(max_tokens) = body.get("max_completion_tokens").or_else(|| body.get("max_tokens")) {
             gen_config["maxOutputTokens"] = max_tokens.clone();
         }
         if let Some(temp) = body.get("temperature") {
@@ -195,14 +195,39 @@ impl Provider for VertexAiProvider {
             gen_config["stopSequences"] = json!(sequences);
         }
 
+        // Translate OpenAI tools array to Gemini functionDeclarations.
+        let tools_value = body.get("tools").and_then(|t| t.as_array()).map(|arr| {
+            let declarations: Vec<serde_json::Value> = arr
+                .iter()
+                .map(|t| {
+                    let name = t.pointer("/function/name").cloned().unwrap_or(json!("unknown"));
+                    let description = t.pointer("/function/description").cloned().unwrap_or(json!(""));
+                    let parameters = t
+                        .pointer("/function/parameters")
+                        .cloned()
+                        .unwrap_or_else(|| json!({"type": "object"}));
+                    json!({
+                        "name": name,
+                        "description": description,
+                        "parameters": parameters
+                    })
+                })
+                .collect();
+            json!([{"functionDeclarations": declarations}])
+        });
+
         let mut new_body = json!({"contents": contents});
         if !system_parts.is_empty() {
-            new_body["system_instruction"] = json!({"parts": system_parts});
+            // Gemini API requires camelCase: systemInstruction.
+            new_body["systemInstruction"] = json!({"parts": system_parts});
         }
         if let Some(obj) = gen_config.as_object()
             && !obj.is_empty()
         {
             new_body["generationConfig"] = gen_config;
+        }
+        if let Some(tools) = tools_value {
+            new_body["tools"] = tools;
         }
 
         *body = new_body;
@@ -216,6 +241,38 @@ impl Provider for VertexAiProvider {
     /// and are mapped to the OpenAI `finish_reason` set.
     fn transform_response(&self, body: &mut serde_json::Value) -> Result<()> {
         use serde_json::json;
+
+        // Check for a blocked prompt (no candidates, but promptFeedback.blockReason set).
+        let candidates = body.get("candidates").and_then(|c| c.as_array());
+        if candidates.is_none_or(|c| c.is_empty()) {
+            let block_reason = body
+                .pointer("/promptFeedback/blockReason")
+                .and_then(|r| r.as_str())
+                .unwrap_or("UNKNOWN");
+            let prompt_tokens = body
+                .pointer("/usageMetadata/promptTokenCount")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            *body = json!({
+                "id": "gemini-resp",
+                "object": "chat.completion",
+                "created": 0u64,
+                "model": "",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": null},
+                    "finish_reason": "content_filter"
+                }],
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": 0,
+                    "total_tokens": prompt_tokens
+                },
+                "system_fingerprint": null,
+                "_block_reason": block_reason
+            });
+            return Ok(());
+        }
 
         let candidate = body.pointer("/candidates/0").cloned();
         let finish_reason_raw = candidate
@@ -259,7 +316,8 @@ impl Provider for VertexAiProvider {
         let finish_reason = match finish_reason_raw {
             "STOP" => "stop",
             "MAX_TOKENS" => "length",
-            "SAFETY" | "RECITATION" | "BLOCKLIST" | "PROHIBITED_CONTENT" => "content_filter",
+            "SAFETY" | "RECITATION" | "BLOCKLIST" | "PROHIBITED_CONTENT" | "SPII" | "IMAGE_SAFETY" => "content_filter",
+            "LANGUAGE" | "OTHER" => "stop",
             "TOOL_CODE" | "FUNCTION_CALL" => "tool_calls",
             _ => "stop",
         };
@@ -338,6 +396,27 @@ impl Provider for VertexAiProvider {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
+        // Extract tool_calls from the normalized message if present.
+        let stream_tool_calls = choice
+            .and_then(|c| c.pointer("/message/tool_calls"))
+            .and_then(|v| v.as_array())
+            .filter(|arr| !arr.is_empty())
+            .map(|arr| {
+                use crate::types::{StreamFunctionCall, StreamToolCall, ToolType};
+                arr.iter()
+                    .enumerate()
+                    .map(|(idx, tc)| StreamToolCall {
+                        index: idx as u32,
+                        id: tc.get("id").and_then(|v| v.as_str()).map(ToOwned::to_owned),
+                        call_type: Some(ToolType::Function),
+                        function: tc.get("function").map(|f| StreamFunctionCall {
+                            name: f.get("name").and_then(|v| v.as_str()).map(ToOwned::to_owned),
+                            arguments: f.get("arguments").and_then(|v| v.as_str()).map(ToOwned::to_owned),
+                        }),
+                    })
+                    .collect::<Vec<_>>()
+            });
+
         use crate::types::{FinishReason, StreamChoice, StreamDelta};
 
         let finish_reason = match finish_reason_str {
@@ -358,7 +437,7 @@ impl Provider for VertexAiProvider {
                 delta: StreamDelta {
                     role: Some("assistant".to_owned()),
                     content,
-                    tool_calls: None,
+                    tool_calls: stream_tool_calls,
                     function_call: None,
                     refusal: None,
                 },
@@ -413,9 +492,9 @@ mod tests {
 
         p.transform_request(&mut body).unwrap();
 
-        // System instruction extracted.
+        // System instruction extracted with camelCase key required by Gemini API.
         assert_eq!(
-            body["system_instruction"]["parts"][0]["text"],
+            body["systemInstruction"]["parts"][0]["text"],
             "You are a helpful assistant."
         );
 

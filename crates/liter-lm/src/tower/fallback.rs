@@ -106,7 +106,7 @@ where
         Box::pin(async move {
             match primary_fut.await {
                 Ok(resp) => Ok(resp),
-                Err(e) if is_transient(&e) => {
+                Err(e) if e.is_transient() => {
                     tracing::warn!(
                         error = %e,
                         "primary service failed with transient error; trying fallback"
@@ -117,15 +117,4 @@ where
             }
         })
     }
-}
-
-/// Returns `true` for errors that are worth retrying on a different service.
-fn is_transient(e: &LiterLmError) -> bool {
-    matches!(
-        e,
-        LiterLmError::RateLimited { .. }
-            | LiterLmError::ServiceUnavailable { .. }
-            | LiterLmError::Timeout
-            | LiterLmError::ServerError { .. }
-    )
 }

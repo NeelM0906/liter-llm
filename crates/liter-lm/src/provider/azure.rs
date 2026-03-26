@@ -16,7 +16,7 @@ use crate::provider::Provider;
 /// - The URL embeds the deployment name rather than sending it in the request
 ///   body; see [`AzureProvider::build_url`].
 /// - The API version is configurable via `AZURE_API_VERSION` (default:
-///   `2024-10-21`).
+///   `2025-02-01-preview`).
 ///
 /// # URL Format
 ///
@@ -51,7 +51,7 @@ impl AzureProvider {
     ///   customer resource URL in the form `https://{resource}.openai.azure.com`.
     ///   Trailing slashes are stripped.
     /// - `AZURE_API_VERSION`: optional API version string (default:
-    ///   `2024-10-21`).
+    ///   `2025-02-01-preview`).
     #[must_use]
     pub fn new() -> Self {
         let base_url = std::env::var("AZURE_OPENAI_ENDPOINT")
@@ -60,7 +60,7 @@ impl AzureProvider {
             .trim_end_matches('/')
             .to_owned();
 
-        let api_version = std::env::var("AZURE_API_VERSION").unwrap_or_else(|_| "2024-10-21".to_owned());
+        let api_version = std::env::var("AZURE_API_VERSION").unwrap_or_else(|_| "2025-02-01-preview".to_owned());
 
         Self { base_url, api_version }
     }
@@ -134,6 +134,11 @@ impl Provider for AzureProvider {
             // hitting the wrong endpoint.
             return endpoint_path.to_owned();
         }
+        // If the base URL already contains the deployments path (e.g. it was
+        // supplied pre-formatted), avoid duplicating it.
+        if self.base_url.contains("/openai/deployments/") {
+            return format!("{}{}?api-version={}", self.base_url, endpoint_path, self.api_version);
+        }
         format!(
             "{}/openai/deployments/{}{}?api-version={}",
             self.base_url, model, endpoint_path, self.api_version
@@ -205,6 +210,25 @@ mod tests {
         let url = provider.build_url("/chat/completions", "gpt-4");
         // Should not contain double slashes.
         assert!(!url.contains("//openai"), "double slash in url: {url}");
+    }
+
+    #[test]
+    fn build_url_already_contains_deployments_path() {
+        // When base_url already contains /openai/deployments/{name}, do not
+        // insert the path fragment a second time.
+        let provider = make_provider(
+            "https://myresource.openai.azure.com/openai/deployments/gpt-4",
+            "2025-02-01-preview",
+        );
+        let url = provider.build_url("/chat/completions", "gpt-4");
+        assert!(
+            !url.contains("deployments/gpt-4/openai/deployments"),
+            "deployment path must not be doubled: {url}"
+        );
+        assert!(
+            url.contains("/openai/deployments/gpt-4/chat/completions"),
+            "url should contain the deployment path: {url}"
+        );
     }
 
     #[test]

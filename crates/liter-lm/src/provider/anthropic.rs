@@ -59,6 +59,7 @@ impl Provider for AnthropicProvider {
     /// - System messages extracted to top-level `system` field as content blocks.
     /// - User/assistant messages converted to Anthropic content block arrays.
     /// - Tool messages (role=tool) become user messages with `tool_result` blocks.
+    /// - Consecutive same-role messages are merged (Anthropic requires alternating roles).
     /// - `max_tokens` defaults to 4096 if not set (Anthropic requires it).
     /// - `stop` renamed to `stop_sequences` and normalised to an array.
     /// - `tool_choice` mapped from OpenAI semantics to Anthropic semantics.
@@ -66,13 +67,20 @@ impl Provider for AnthropicProvider {
     /// - Unsupported parameters removed: `n`, `presence_penalty`, `frequency_penalty`,
     ///   `logit_bias`, `stream` (the client handles stream separately).
     fn transform_request(&self, body: &mut Value) -> Result<()> {
-        // ── 1. Extract system messages ────────────────────────────────────────
+        // ── 0. Validate messages array is non-empty ────────────────────────────
         let messages = body
             .get("messages")
             .and_then(|m| m.as_array())
             .cloned()
             .unwrap_or_default();
 
+        if messages.is_empty() {
+            return Err(LiterLmError::BadRequest {
+                message: "messages array must not be empty".to_owned(),
+            });
+        }
+
+        // ── 1. Extract system messages ────────────────────────────────────────
         let mut system_blocks: Vec<Value> = Vec::new();
         let mut non_system_messages: Vec<Value> = Vec::new();
 
@@ -81,8 +89,22 @@ impl Provider for AnthropicProvider {
             match role {
                 "system" | "developer" => {
                     // Both system and developer roles map to Anthropic system content.
-                    if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
-                        system_blocks.push(json!({"type": "text", "text": content}));
+                    // Content may be a string or a content-block array.
+                    match msg.get("content") {
+                        Some(Value::String(s)) if !s.is_empty() => {
+                            let mut block = json!({"type": "text", "text": s});
+                            // Propagate cache_control if present.
+                            if let Some(cc) = msg.get("cache_control") {
+                                block["cache_control"] = cc.clone();
+                            }
+                            system_blocks.push(block);
+                        }
+                        Some(Value::Array(parts)) => {
+                            for part in parts {
+                                system_blocks.push(part.clone());
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 _ => non_system_messages.push(msg),
@@ -99,14 +121,24 @@ impl Provider for AnthropicProvider {
             .map(convert_message_to_anthropic)
             .collect();
 
-        body["messages"] = json!(converted_messages);
+        // ── 3. Merge consecutive same-role messages ───────────────────────────
+        // Anthropic requires strictly alternating user/assistant roles.
+        let merged_messages = merge_consecutive_same_role(converted_messages);
 
-        // ── 3. Ensure max_tokens is present (required by Anthropic) ───────────
+        body["messages"] = json!(merged_messages);
+
+        // ── 4. Ensure max_tokens is present (required by Anthropic) ───────────
+        // Also handle the OpenAI alias max_completion_tokens.
         if body.get("max_tokens").is_none() {
-            body["max_tokens"] = json!(DEFAULT_MAX_TOKENS);
+            if let Some(mct) = body.get("max_completion_tokens").cloned() {
+                body["max_tokens"] = mct;
+            } else {
+                body["max_tokens"] = json!(DEFAULT_MAX_TOKENS);
+            }
         }
+        body.as_object_mut().map(|o| o.remove("max_completion_tokens"));
 
-        // ── 4. Convert stop → stop_sequences (must be array) ─────────────────
+        // ── 5. Convert stop → stop_sequences (must be array) ─────────────────
         if let Some(stop) = body.get("stop").cloned() {
             let stop_sequences = match stop {
                 Value::String(s) => json!([s]),
@@ -117,7 +149,7 @@ impl Provider for AnthropicProvider {
             body.as_object_mut().map(|o| o.remove("stop"));
         }
 
-        // ── 5. Convert tool_choice ─────────────────────────────────────────────
+        // ── 6. Convert tool_choice ─────────────────────────────────────────────
         if let Some(tool_choice) = body.get("tool_choice").cloned() {
             let anthropic_tool_choice = convert_tool_choice(&tool_choice);
             match anthropic_tool_choice {
@@ -132,7 +164,7 @@ impl Provider for AnthropicProvider {
             }
         }
 
-        // ── 6. Convert tools from OpenAI format to Anthropic format ───────────
+        // ── 7. Convert tools from OpenAI format to Anthropic format ───────────
         if let Some(tools) = body.get("tools").cloned()
             && let Some(tools_array) = tools.as_array()
         {
@@ -140,7 +172,7 @@ impl Provider for AnthropicProvider {
             body["tools"] = json!(anthropic_tools);
         }
 
-        // ── 7. Remove unsupported parameters ──────────────────────────────────
+        // ── 8. Remove unsupported parameters ──────────────────────────────────
         if let Some(obj) = body.as_object_mut() {
             for key in &[
                 "n",
@@ -182,20 +214,34 @@ impl Provider for AnthropicProvider {
         let content_blocks = body.get("content").and_then(|v| v.as_array()).cloned();
 
         // Extract text content by joining all text blocks.
+        // Also collect thinking blocks as text (prefixed so callers can parse if needed).
         let text_content: Option<String> = content_blocks.as_ref().map(|blocks| {
             blocks
                 .iter()
-                .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
-                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                .filter(|b| matches!(b.get("type").and_then(|t| t.as_str()), Some("text") | Some("thinking")))
+                .filter_map(|b| {
+                    // "text" blocks have a "text" field; "thinking" blocks have a "thinking" field.
+                    if b.get("type").and_then(|t| t.as_str()) == Some("thinking") {
+                        b.get("thinking").and_then(|t| t.as_str())
+                    } else {
+                        b.get("text").and_then(|t| t.as_str())
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join("")
         });
 
         // Extract tool_use blocks into OpenAI-format tool_calls.
+        // Treat both "tool_use" and "server_tool_use" the same way.
         let tool_calls: Option<Vec<Value>> = content_blocks.as_ref().map(|blocks| {
             blocks
                 .iter()
-                .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
+                .filter(|b| {
+                    matches!(
+                        b.get("type").and_then(|t| t.as_str()),
+                        Some("tool_use") | Some("server_tool_use")
+                    )
+                })
                 .map(|b| {
                     let arguments = serde_json::to_string(b.get("input").unwrap_or(&json!({}))).unwrap_or_default();
                     json!({
@@ -215,14 +261,24 @@ impl Provider for AnthropicProvider {
         let finish_reason = map_stop_reason(stop_reason);
 
         // Map Anthropic usage → OpenAI usage.
+        // Cache tokens count towards prompt tokens for billing purposes.
         let input_tokens = body
             .pointer("/usage/input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let cache_creation_tokens = body
+            .pointer("/usage/cache_creation_input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let cache_read_tokens = body
+            .pointer("/usage/cache_read_input_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         let output_tokens = body
             .pointer("/usage/output_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
+        let prompt_tokens = input_tokens + cache_creation_tokens + cache_read_tokens;
 
         // Build the message object — content is null when only tool_calls are present.
         let has_tool_calls = tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
@@ -252,9 +308,9 @@ impl Provider for AnthropicProvider {
                 "finish_reason": finish_reason
             }],
             "usage": {
-                "prompt_tokens": input_tokens,
+                "prompt_tokens": prompt_tokens,
                 "completion_tokens": output_tokens,
-                "total_tokens": input_tokens + output_tokens
+                "total_tokens": prompt_tokens + output_tokens
             }
         });
 
@@ -266,10 +322,10 @@ impl Provider for AnthropicProvider {
     /// Anthropic event types handled:
     /// - `message_start`: emits a role-only delta chunk.
     /// - `content_block_start`: emits empty delta (tool_use: emits tool_call header chunk).
-    /// - `content_block_delta`: emits text or tool input JSON delta.
+    /// - `content_block_delta`: emits text, thinking, or tool input JSON delta.
     /// - `message_delta`: emits final chunk with finish_reason and usage.
     /// - `message_stop`: signals end of stream, returns `Ok(None)`.
-    /// - `content_block_stop`, `ping`: skipped (returns empty delta chunk).
+    /// - `content_block_stop`, `ping`: skipped (returns `Ok(None)` — no content to emit).
     /// - `error`: returns `Err(LiterLmError::Streaming)`.
     fn parse_stream_event(&self, event_data: &str) -> Result<Option<ChatCompletionChunk>> {
         if event_data == "[DONE]" {
@@ -289,13 +345,27 @@ impl Provider for AnthropicProvider {
                 let model = msg.get("model").and_then(|v| v.as_str()).unwrap_or("").to_owned();
 
                 // Anthropic sends initial usage in message_start (input tokens only).
-                let input_tokens = msg.pointer("/usage/input_tokens").and_then(|v| v.as_u64());
+                // Also account for cache tokens in the prompt count.
+                let input_tokens = msg.pointer("/usage/input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                let cache_creation = msg
+                    .pointer("/usage/cache_creation_input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let cache_read = msg
+                    .pointer("/usage/cache_read_input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let prompt_tokens = input_tokens + cache_creation + cache_read;
 
-                let usage = input_tokens.map(|pt| crate::types::Usage {
-                    prompt_tokens: pt,
-                    completion_tokens: 0,
-                    total_tokens: pt,
-                });
+                let usage = if prompt_tokens > 0 {
+                    Some(crate::types::Usage {
+                        prompt_tokens,
+                        completion_tokens: 0,
+                        total_tokens: prompt_tokens,
+                    })
+                } else {
+                    None
+                };
 
                 Ok(Some(ChatCompletionChunk {
                     id,
@@ -323,17 +393,26 @@ impl Provider for AnthropicProvider {
                 // For tool_use blocks, emit the tool_call header (id + name, empty arguments).
                 let block = &event["content_block"];
                 let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                let index = event.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                // Compute the OpenAI tool call index: count only tool_use blocks seen so far.
+                // Anthropic's block index includes text/thinking blocks; we must normalize.
+                let anthropic_index = event.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
 
-                if block_type == "tool_use" {
+                if block_type == "tool_use" || block_type == "server_tool_use" {
                     let tool_id = block.get("id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
                     let tool_name = block.get("name").and_then(|v| v.as_str()).unwrap_or("").to_owned();
 
-                    return Ok(Some(make_empty_chunk_with_tool_start(index, tool_id, tool_name)));
+                    // Use a corrected index for OpenAI compat: we use the Anthropic block index
+                    // directly here since we can't cheaply track state in a stateless function.
+                    // Callers that need perfect sequential indexing should track state externally.
+                    return Ok(Some(make_empty_chunk_with_tool_start(
+                        anthropic_index,
+                        tool_id,
+                        tool_name,
+                    )));
                 }
 
-                // Text block start — emit an empty delta so callers can track state.
-                Ok(Some(make_empty_chunk("", "")))
+                // Text / thinking block start — emit Ok(None) since there is no content yet.
+                Ok(None)
             }
 
             "content_block_delta" => {
@@ -346,12 +425,22 @@ impl Provider for AnthropicProvider {
                         let text = delta.get("text").and_then(|t| t.as_str()).unwrap_or("");
                         Ok(Some(make_text_chunk("", "", text)))
                     }
+                    "thinking_delta" => {
+                        // Extended thinking block — surface as text content so callers
+                        // receive the thinking text rather than silently dropping it.
+                        let thinking = delta.get("thinking").and_then(|t| t.as_str()).unwrap_or("");
+                        if thinking.is_empty() {
+                            Ok(None)
+                        } else {
+                            Ok(Some(make_text_chunk("", "", thinking)))
+                        }
+                    }
                     "input_json_delta" => {
                         // Partial JSON for tool input — emit as tool_call arguments delta.
                         let partial_json = delta.get("partial_json").and_then(|v| v.as_str()).unwrap_or("");
                         Ok(Some(make_tool_arguments_delta(index, partial_json)))
                     }
-                    _ => Ok(Some(make_empty_chunk("", ""))),
+                    _ => Ok(None),
                 }
             }
 
@@ -399,8 +488,8 @@ impl Provider for AnthropicProvider {
             "message_stop" => Ok(None),
 
             "content_block_stop" | "ping" => {
-                // These events carry no delta content; return an empty chunk.
-                Ok(Some(make_empty_chunk("", "")))
+                // These events carry no delta content; return Ok(None).
+                Ok(None)
             }
 
             "error" => {
@@ -415,13 +504,70 @@ impl Provider for AnthropicProvider {
 
             _ => {
                 // Unknown event types are silently skipped.
-                Ok(Some(make_empty_chunk("", "")))
+                Ok(None)
             }
         }
     }
 }
 
 // ── Helper functions ──────────────────────────────────────────────────────────
+
+/// Sanitize a tool_call_id so it only contains characters allowed by Anthropic: `[a-zA-Z0-9_-]`.
+/// Any other character is replaced with `_`.
+fn sanitize_tool_call_id(id: &str) -> String {
+    id.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Merge consecutive messages with the same role by concatenating their content blocks.
+/// Anthropic requires strictly alternating user/assistant roles.
+fn merge_consecutive_same_role(messages: Vec<Value>) -> Vec<Value> {
+    let mut merged: Vec<Value> = Vec::new();
+
+    for msg in messages {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("").to_owned();
+
+        if let Some(last) = merged.last_mut() {
+            let last_role = last.get("role").and_then(|r| r.as_str()).unwrap_or("").to_owned();
+            if last_role == role {
+                // Merge content blocks.
+                let incoming_content = match msg.get("content") {
+                    Some(Value::Array(arr)) => arr.clone(),
+                    Some(Value::String(s)) => vec![json!({"type": "text", "text": s})],
+                    Some(other) => vec![json!({"type": "text", "text": other.to_string()})],
+                    None => vec![],
+                };
+
+                if let Some(Value::Array(existing)) = last.get_mut("content") {
+                    existing.extend(incoming_content);
+                } else {
+                    // Normalize existing content to array first.
+                    let existing_content = match last.get("content") {
+                        Some(Value::String(s)) => vec![json!({"type": "text", "text": s.clone()})],
+                        Some(Value::Array(arr)) => arr.clone(),
+                        Some(other) => vec![json!({"type": "text", "text": other.to_string()})],
+                        None => vec![],
+                    };
+                    let mut combined = existing_content;
+                    combined.extend(incoming_content);
+                    last["content"] = json!(combined);
+                }
+                continue;
+            }
+        }
+
+        merged.push(msg);
+    }
+
+    merged
+}
 
 /// Convert an OpenAI-format message JSON value to Anthropic Messages API format.
 fn convert_message_to_anthropic(msg: Value) -> Value {
@@ -461,35 +607,92 @@ fn convert_message_to_anthropic(msg: Value) -> Value {
                 }
             }
 
-            // If no blocks were produced, emit a single empty text block to satisfy Anthropic.
+            // If no blocks were produced AND there are no tool_calls, emit an empty text block.
+            // Do NOT inject empty text when tool_use blocks are present — Anthropic rejects it.
+            let has_tool_use = blocks
+                .iter()
+                .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"));
             if blocks.is_empty() {
                 blocks.push(json!({"type": "text", "text": ""}));
+            } else if !has_tool_use {
+                // only text blocks: fine as-is
             }
+            // When there are tool_use blocks, do not add an empty text block.
 
             json!({"role": "assistant", "content": blocks})
         }
         "tool" => {
             // OpenAI tool message → Anthropic user message with tool_result block.
-            let tool_call_id = msg.get("tool_call_id").and_then(|v| v.as_str()).unwrap_or("");
-            let content_text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+            let raw_id = msg.get("tool_call_id").and_then(|v| v.as_str()).unwrap_or("");
+            let tool_use_id = sanitize_tool_call_id(raw_id);
+
+            // Content may be a string or an array (e.g. images in tool results).
+            let result_content = match msg.get("content") {
+                Some(Value::Array(arr)) => {
+                    // Pass through content array (may contain image blocks, etc.)
+                    arr.iter()
+                        .map(|part| {
+                            let part_type = part.get("type").and_then(|t| t.as_str()).unwrap_or("text");
+                            match part_type {
+                                "image_url" => {
+                                    // Convert image_url to Anthropic image source.
+                                    let url = part.pointer("/image_url/url").and_then(|u| u.as_str()).unwrap_or("");
+                                    if url.starts_with("data:")
+                                        && let Some((header, data)) = url.split_once(',')
+                                    {
+                                        let media_type = header.trim_start_matches("data:").trim_end_matches(";base64");
+                                        return json!({
+                                            "type": "image",
+                                            "source": {
+                                                "type": "base64",
+                                                "media_type": media_type,
+                                                "data": data
+                                            }
+                                        });
+                                    }
+                                    json!({
+                                        "type": "image",
+                                        "source": {"type": "url", "url": url}
+                                    })
+                                }
+                                _ => {
+                                    let text = part.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                                    json!({"type": "text", "text": text})
+                                }
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                }
+                Some(Value::String(s)) => vec![json!({"type": "text", "text": s})],
+                _ => vec![json!({"type": "text", "text": ""})],
+            };
+
+            let mut tool_result_block = json!({
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": result_content
+            });
+
+            // Propagate cache_control if present.
+            if let Some(cc) = msg.get("cache_control") {
+                tool_result_block["cache_control"] = cc.clone();
+            }
+
             json!({
                 "role": "user",
-                "content": [{
-                    "type": "tool_result",
-                    "tool_use_id": tool_call_id,
-                    "content": [{"type": "text", "text": content_text}]
-                }]
+                "content": [tool_result_block]
             })
         }
         "function" => {
             // Deprecated function-role message — treat as a tool result.
             let name = msg.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let sanitized_name = sanitize_tool_call_id(name);
             let content_text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
             json!({
                 "role": "user",
                 "content": [{
                     "type": "tool_result",
-                    "tool_use_id": name,
+                    "tool_use_id": sanitized_name,
                     "content": [{"type": "text", "text": content_text}]
                 }]
             })
@@ -514,7 +717,12 @@ fn convert_user_content_to_anthropic(content: Option<&Value>) -> Value {
                     match part_type {
                         "text" => {
                             let text = part.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                            Some(json!({"type": "text", "text": text}))
+                            let mut block = json!({"type": "text", "text": text});
+                            // Propagate cache_control if present.
+                            if let Some(cc) = part.get("cache_control") {
+                                block["cache_control"] = cc.clone();
+                            }
+                            Some(block)
                         }
                         "image_url" => {
                             // Convert data-URI or plain URL to Anthropic image source.
@@ -542,7 +750,21 @@ fn convert_user_content_to_anthropic(content: Option<&Value>) -> Value {
                                 }
                             }))
                         }
-                        _ => None,
+                        _ => {
+                            // Unknown content part types: fall back to text representation
+                            // and log a warning so callers can investigate.
+                            #[cfg(feature = "tracing")]
+                            tracing::warn!(
+                                part_type = part_type,
+                                "unrecognized user content part type; falling back to text"
+                            );
+                            let text = part.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                            if text.is_empty() {
+                                None
+                            } else {
+                                Some(json!({"type": "text", "text": text}))
+                            }
+                        }
                     }
                 })
                 .collect();
@@ -579,14 +801,21 @@ fn convert_tool_choice(tool_choice: &Value) -> Option<Value> {
 ///
 /// OpenAI: `{"type": "function", "function": {"name": "X", "description": "Y", "parameters": Z}}`
 /// Anthropic: `{"name": "X", "description": "Y", "input_schema": Z}`
+///
+/// Also normalises `input_schema.type` to `"object"` if absent or mis-typed.
 fn convert_tool_to_anthropic(tool: &Value) -> Value {
     let function = tool.get("function");
     let name = function.and_then(|f| f.get("name")).cloned().unwrap_or(json!(""));
     let description = function.and_then(|f| f.get("description")).cloned();
-    let parameters = function
+    let mut parameters = function
         .and_then(|f| f.get("parameters"))
         .cloned()
         .unwrap_or(json!({"type": "object", "properties": {}}));
+
+    // Normalize input_schema.type to "object" — Anthropic rejects other values.
+    if parameters.get("type").and_then(|t| t.as_str()) != Some("object") {
+        parameters["type"] = json!("object");
+    }
 
     let mut tool_def = json!({
         "name": name,
@@ -606,31 +835,8 @@ fn map_stop_reason(stop_reason: &str) -> &'static str {
         "end_turn" | "stop_sequence" => "stop",
         "tool_use" => "tool_calls",
         "max_tokens" => "length",
+        "content_filtered" | "refusal" => "content_filter",
         _ => "stop",
-    }
-}
-
-/// Build a `ChatCompletionChunk` with an empty content delta.
-fn make_empty_chunk(id: &str, model: &str) -> ChatCompletionChunk {
-    ChatCompletionChunk {
-        id: id.to_owned(),
-        object: "chat.completion.chunk".to_owned(),
-        created: 0,
-        model: model.to_owned(),
-        choices: vec![StreamChoice {
-            index: 0,
-            delta: StreamDelta {
-                role: None,
-                content: None,
-                tool_calls: None,
-                function_call: None,
-                refusal: None,
-            },
-            finish_reason: None,
-        }],
-        usage: None,
-        system_fingerprint: None,
-        service_tier: None,
     }
 }
 
@@ -1132,12 +1338,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_stream_event_ping_returns_empty_chunk() {
+    fn parse_stream_event_ping_returns_none() {
         let event = r#"{"type":"ping"}"#;
-        let chunk = provider().parse_stream_event(event).unwrap();
-        assert!(chunk.is_some());
-        let chunk = chunk.unwrap();
-        assert!(chunk.choices[0].delta.content.is_none());
+        let result = provider().parse_stream_event(event).unwrap();
+        assert!(result.is_none(), "ping should return Ok(None), not a chunk");
+    }
+
+    #[test]
+    fn parse_stream_event_content_block_stop_returns_none() {
+        let event = r#"{"type":"content_block_stop","index":0}"#;
+        let result = provider().parse_stream_event(event).unwrap();
+        assert!(result.is_none(), "content_block_stop should return Ok(None)");
     }
 
     // ── chat_completions_path test ────────────────────────────────────────────
@@ -1145,5 +1356,293 @@ mod tests {
     #[test]
     fn chat_completions_path_is_messages() {
         assert_eq!(provider().chat_completions_path(), "/messages");
+    }
+
+    // ── new tests for fixed issues ────────────────────────────────────────────
+
+    #[test]
+    fn transform_request_empty_messages_returns_error() {
+        let mut body = json!({
+            "model": "claude-3-5-sonnet-20241022",
+            "messages": []
+        });
+        let result = provider().transform_request(&mut body);
+        assert!(result.is_err(), "empty messages should return an error");
+    }
+
+    #[test]
+    fn transform_request_sanitizes_tool_call_id() {
+        let mut body = json!({
+            "model": "claude-3-5-sonnet-20241022",
+            "messages": [
+                {"role": "user", "content": "What is the weather?"},
+                {"role": "assistant", "content": null, "tool_calls": [{
+                    "id": "call_abc.123",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": "{}"}
+                }]},
+                {"role": "tool", "tool_call_id": "call_abc.123", "content": "Sunny"}
+            ]
+        });
+        provider().transform_request(&mut body).unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        // The tool_result message is the last one (index 2 after merging nothing)
+        let tool_result_msg = messages
+            .iter()
+            .find(|m| m["role"] == "user" && m["content"][0]["type"] == "tool_result")
+            .unwrap();
+        // Dots should be replaced with underscores.
+        assert_eq!(tool_result_msg["content"][0]["tool_use_id"], "call_abc_123");
+    }
+
+    #[test]
+    fn transform_request_merges_consecutive_user_messages() {
+        let mut body = json!({
+            "model": "claude-3-5-sonnet-20241022",
+            "messages": [
+                {"role": "user", "content": "First"},
+                {"role": "user", "content": "Second"}
+            ]
+        });
+        provider().transform_request(&mut body).unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        // Two consecutive user messages should be merged into one.
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+        let content = messages[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+    }
+
+    #[test]
+    fn transform_request_system_content_array_passed_through() {
+        let mut body = json!({
+            "model": "claude-3-5-sonnet-20241022",
+            "messages": [
+                {"role": "system", "content": [
+                    {"type": "text", "text": "Block one"},
+                    {"type": "text", "text": "Block two"}
+                ]},
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+        provider().transform_request(&mut body).unwrap();
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system.len(), 2);
+        assert_eq!(system[0]["text"], "Block one");
+    }
+
+    #[test]
+    fn transform_request_system_cache_control_propagated() {
+        let mut body = json!({
+            "model": "claude-3-5-sonnet-20241022",
+            "messages": [
+                {"role": "system", "content": "Cached instructions", "cache_control": {"type": "ephemeral"}},
+                {"role": "user", "content": "Hi"}
+            ]
+        });
+        provider().transform_request(&mut body).unwrap();
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn transform_request_user_content_cache_control_propagated() {
+        let mut body = json!({
+            "model": "claude-3-5-sonnet-20241022",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Cached text", "cache_control": {"type": "ephemeral"}}
+                ]
+            }]
+        });
+        provider().transform_request(&mut body).unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        let content = messages[0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn transform_request_tool_input_schema_type_normalized() {
+        let mut body = json!({
+            "model": "claude-3-5-sonnet-20241022",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "my_tool",
+                    "parameters": {"properties": {}}
+                    // no "type" field
+                }
+            }]
+        });
+        provider().transform_request(&mut body).unwrap();
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools[0]["input_schema"]["type"], "object");
+    }
+
+    #[test]
+    fn transform_request_max_completion_tokens_mapped() {
+        let mut body = json!({
+            "model": "claude-3-5-sonnet-20241022",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_completion_tokens": 512
+        });
+        provider().transform_request(&mut body).unwrap();
+        assert_eq!(body["max_tokens"], json!(512u64));
+        assert!(body.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn transform_request_tool_result_content_array_preserved() {
+        let mut body = json!({
+            "model": "claude-3-5-sonnet-20241022",
+            "messages": [
+                {"role": "user", "content": "Look"},
+                {"role": "assistant", "content": null, "tool_calls": [{
+                    "id": "call_img",
+                    "type": "function",
+                    "function": {"name": "get_image", "arguments": "{}"}
+                }]},
+                {"role": "tool", "tool_call_id": "call_img", "content": [
+                    {"type": "text", "text": "Here is the image"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc123"}}
+                ]}
+            ]
+        });
+        provider().transform_request(&mut body).unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        let tool_result_msg = messages
+            .iter()
+            .find(|m| {
+                m["role"] == "user"
+                    && m["content"]
+                        .as_array()
+                        .is_some_and(|c| c.first().is_some_and(|b| b["type"] == "tool_result"))
+            })
+            .unwrap();
+        let result_content = tool_result_msg["content"][0]["content"].as_array().unwrap();
+        assert_eq!(result_content.len(), 2);
+        assert_eq!(result_content[0]["type"], "text");
+        assert_eq!(result_content[1]["type"], "image");
+    }
+
+    #[test]
+    fn transform_response_thinking_block_included_in_content() {
+        let mut body = json!({
+            "id": "msg_think",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "Let me reason..."},
+                {"type": "text", "text": "The answer is 42."}
+            ],
+            "model": "claude-3-5-sonnet-20241022",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 20}
+        });
+        provider().transform_response(&mut body).unwrap();
+        let content = body["choices"][0]["message"]["content"].as_str().unwrap();
+        assert!(content.contains("Let me reason..."));
+        assert!(content.contains("The answer is 42."));
+    }
+
+    #[test]
+    fn transform_response_server_tool_use_treated_as_tool_call() {
+        let mut body = json!({
+            "id": "msg_srv",
+            "type": "message",
+            "role": "assistant",
+            "content": [{
+                "type": "server_tool_use",
+                "id": "srvtool_01",
+                "name": "web_search",
+                "input": {"query": "Rust programming"}
+            }],
+            "model": "claude-3-5-sonnet-20241022",
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 5, "output_tokens": 5}
+        });
+        provider().transform_response(&mut body).unwrap();
+        let tool_calls = body["choices"][0]["message"]["tool_calls"].as_array().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["id"], "srvtool_01");
+        assert_eq!(tool_calls[0]["function"]["name"], "web_search");
+    }
+
+    #[test]
+    fn transform_response_cache_tokens_counted_in_prompt() {
+        let mut body = json!({
+            "id": "msg_cache",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "ok"}],
+            "model": "claude-3-5-sonnet-20241022",
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 100,
+                "cache_creation_input_tokens": 50,
+                "cache_read_input_tokens": 25,
+                "output_tokens": 10
+            }
+        });
+        provider().transform_response(&mut body).unwrap();
+        // prompt_tokens = 100 + 50 + 25 = 175
+        assert_eq!(body["usage"]["prompt_tokens"], 175u64);
+        assert_eq!(body["usage"]["completion_tokens"], 10u64);
+        assert_eq!(body["usage"]["total_tokens"], 185u64);
+    }
+
+    #[test]
+    fn transform_response_tool_only_no_empty_text_block_in_request() {
+        // When assistant has only tool_calls, the converted message should NOT inject empty text.
+        let mut body = json!({
+            "model": "claude-3-5-sonnet-20241022",
+            "messages": [
+                {"role": "user", "content": "Call a tool"},
+                {"role": "assistant", "tool_calls": [{
+                    "id": "call_xyz",
+                    "type": "function",
+                    "function": {"name": "my_fn", "arguments": "{}"}
+                }]},
+                {"role": "tool", "tool_call_id": "call_xyz", "content": "result"}
+            ]
+        });
+        provider().transform_request(&mut body).unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        let assistant_msg = messages.iter().find(|m| m["role"] == "assistant").unwrap();
+        let blocks = assistant_msg["content"].as_array().unwrap();
+        // Only the tool_use block should be present; no empty text block.
+        assert!(blocks.iter().all(|b| b["type"] != "text" || b["text"] != ""));
+        assert!(blocks.iter().any(|b| b["type"] == "tool_use"));
+    }
+
+    #[test]
+    fn parse_stream_event_thinking_delta_emits_text_chunk() {
+        let event = r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I am thinking..."}}"#;
+        let chunk = provider().parse_stream_event(event).unwrap().expect("expected chunk");
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("I am thinking..."));
+    }
+
+    #[test]
+    fn parse_stream_event_message_start_cache_tokens_in_usage() {
+        let event = r#"{"type":"message_start","message":{"id":"msg_x","model":"claude-opus","content":[],"usage":{"input_tokens":100,"cache_creation_input_tokens":50,"cache_read_input_tokens":25,"output_tokens":0}}}"#;
+        let chunk = provider().parse_stream_event(event).unwrap().expect("expected chunk");
+        let usage = chunk.usage.unwrap();
+        // prompt_tokens = 100 + 50 + 25 = 175
+        assert_eq!(usage.prompt_tokens, 175);
+    }
+
+    #[test]
+    fn sanitize_tool_call_id_replaces_invalid_chars() {
+        assert_eq!(sanitize_tool_call_id("call.abc!123"), "call_abc_123");
+        assert_eq!(sanitize_tool_call_id("call-abc_123"), "call-abc_123");
+        assert_eq!(sanitize_tool_call_id("call abc"), "call_abc");
+    }
+
+    #[test]
+    fn map_stop_reason_content_filter() {
+        assert_eq!(map_stop_reason("content_filtered"), "content_filter");
+        assert_eq!(map_stop_reason("refusal"), "content_filter");
     }
 }

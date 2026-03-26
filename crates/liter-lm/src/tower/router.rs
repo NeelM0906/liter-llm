@@ -91,7 +91,7 @@ where
                     for mut svc in deployments {
                         match svc.call(req.clone()).await {
                             Ok(resp) => return Ok(resp),
-                            Err(e) if is_transient(&e) => {
+                            Err(e) if e.is_transient() => {
                                 tracing::warn!(
                                     error = %e,
                                     "deployment failed with transient error; trying next deployment"
@@ -108,17 +108,4 @@ where
             }
         }
     }
-}
-
-/// Returns `true` for errors that are worth retrying on a different deployment.
-///
-/// Mirrors the same predicate used in [`super::fallback`].
-fn is_transient(e: &LiterLmError) -> bool {
-    matches!(
-        e,
-        LiterLmError::RateLimited { .. }
-            | LiterLmError::ServiceUnavailable { .. }
-            | LiterLmError::Timeout
-            | LiterLmError::ServerError { .. }
-    )
 }

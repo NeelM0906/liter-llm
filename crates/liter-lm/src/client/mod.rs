@@ -190,19 +190,22 @@ impl DefaultClient {
         Ok((url, auth_header, body))
     }
 
-    /// Build the combined header list for a POST request.
+    /// Build the combined header list for a request.
     ///
     /// Merges the provider's static [`Provider::extra_headers`] with the
     /// dynamic signing headers returned by [`Provider::signing_headers`] for
-    /// the given URL and serialised body.  Returns an owned vec of
+    /// the given URL and body bytes.  Returns an owned vec of
     /// `(name, value)` pairs; callers borrow these for the HTTP layer.
-    fn all_post_headers(&self, url: &str, body_bytes: &[u8]) -> Vec<(String, String)> {
+    fn all_headers(&self, method: &str, url: &str, body_bytes: &[u8]) -> Vec<(String, String)> {
         // Start with dynamic signing headers (e.g. SigV4 Authorization + x-amz-date).
-        let mut headers = self.provider.signing_headers("POST", url, body_bytes);
+        let mut headers = self.provider.signing_headers(method, url, body_bytes);
         // Append static provider extra headers (e.g. anthropic-version).
-        for (name, value) in self.provider.extra_headers() {
-            headers.push(((*name).to_owned(), (*value).to_owned()));
-        }
+        headers.extend(
+            self.provider
+                .extra_headers()
+                .iter()
+                .map(|&(name, value)| (name.to_owned(), value.to_owned())),
+        );
         headers
     }
 }
@@ -243,8 +246,8 @@ impl LlmClient for DefaultClient {
                 self.prepare_request(&req, self.provider.chat_completions_path(), &req.model, Some(false))?;
 
             // Serialise body for signing; the value is also passed to post_json_raw below.
-            let body_bytes = serde_json::to_vec(&body).unwrap_or_default();
-            let all_headers = self.all_post_headers(&url, &body_bytes);
+            let body_bytes = serde_json::to_vec(&body)?;
+            let all_headers = self.all_headers("POST", &url, &body_bytes);
             let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
 
             let auth = auth_header.as_ref().map(str_pair);
@@ -261,8 +264,8 @@ impl LlmClient for DefaultClient {
             let (url, auth_header, body) =
                 self.prepare_request(&req, self.provider.chat_completions_path(), &req.model, Some(true))?;
 
-            let body_bytes = serde_json::to_vec(&body).unwrap_or_default();
-            let all_headers = self.all_post_headers(&url, &body_bytes);
+            let body_bytes = serde_json::to_vec(&body)?;
+            let all_headers = self.all_headers("POST", &url, &body_bytes);
             let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
 
             let auth = auth_header.as_ref().map(str_pair);
@@ -289,8 +292,8 @@ impl LlmClient for DefaultClient {
             let (url, auth_header, body) =
                 self.prepare_request(&req, self.provider.embeddings_path(), &req.model, None)?;
 
-            let body_bytes = serde_json::to_vec(&body).unwrap_or_default();
-            let all_headers = self.all_post_headers(&url, &body_bytes);
+            let body_bytes = serde_json::to_vec(&body)?;
+            let all_headers = self.all_headers("POST", &url, &body_bytes);
             let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
 
             let auth = auth_header.as_ref().map(str_pair);
@@ -306,13 +309,8 @@ impl LlmClient for DefaultClient {
             let (url, auth_header) = self.prepare_headers(self.provider.models_path());
             let auth = auth_header.as_ref().map(str_pair);
             // list_models is a GET request; signing headers use an empty body.
-            let sign_headers = self.provider.signing_headers("GET", &url, &[]);
-            let static_extras = self.provider.extra_headers();
-            let all: Vec<(String, String)> = sign_headers
-                .into_iter()
-                .chain(static_extras.iter().map(|(n, v)| ((*n).to_owned(), (*v).to_owned())))
-                .collect();
-            let extra: Vec<(&str, &str)> = all.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+            let all_headers = self.all_headers("GET", &url, &[]);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
 
             http::request::get_json(&self.http, &url, auth, &extra, self.config.max_retries).await
         })

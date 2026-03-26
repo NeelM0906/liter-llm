@@ -34,8 +34,24 @@ pub fn should_retry(status: u16, attempt: u32, max_retries: u32, retry_after: Op
 ///
 /// The header may be:
 /// - A non-negative integer (number of seconds to wait), or
-/// - An HTTP-date (not yet supported; returns `None`).
+/// - An HTTP-date (RFC 7231 format; not yet parsed — falls back to exponential
+///   backoff with a warning).
 pub fn parse_retry_after(value: &str) -> Option<Duration> {
-    let secs: u64 = value.trim().parse().ok()?;
-    Some(Duration::from_secs(secs))
+    let trimmed = value.trim();
+
+    // Attempt to parse as a plain integer (seconds).
+    if let Ok(secs) = trimmed.parse::<u64>() {
+        return Some(Duration::from_secs(secs));
+    }
+
+    // HTTP-date format (e.g. "Wed, 21 Oct 2015 07:28:00 GMT") is not yet
+    // parsed.  Emit a warning so operators know when servers use this format,
+    // and return None to fall back to exponential backoff.
+    #[cfg(feature = "tracing")]
+    tracing::warn!(
+        retry_after = trimmed,
+        "Retry-After header uses HTTP-date format which is not yet supported; \
+         falling back to exponential backoff"
+    );
+    None
 }

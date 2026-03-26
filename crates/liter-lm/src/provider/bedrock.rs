@@ -21,8 +21,11 @@ fn percent_encode_model(model: &str) -> String {
             }
             other => {
                 encoded.push('%');
-                encoded.push(char::from_digit(u32::from(other >> 4), 16).unwrap_or('0'));
-                encoded.push(char::from_digit(u32::from(other & 0xf), 16).unwrap_or('0'));
+                // RFC 3986 §2.1 requires uppercase hex digits.
+                let hi = char::from_digit(u32::from(other >> 4), 16).unwrap_or('0');
+                let lo = char::from_digit(u32::from(other & 0xf), 16).unwrap_or('0');
+                encoded.push(hi.to_ascii_uppercase());
+                encoded.push(lo.to_ascii_uppercase());
             }
         }
     }
@@ -191,15 +194,56 @@ impl Provider for BedrockProvider {
                 "system" | "developer" => {
                     if let Some(text) = content.and_then(|c| c.as_str()) {
                         system_parts.push(json!({"text": text}));
+                    } else if let Some(array) = content.and_then(|c| c.as_array()) {
+                        // System content may be a list of typed blocks; extract text parts.
+                        for part in array {
+                            if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                                system_parts.push(json!({"text": text}));
+                            }
+                        }
                     }
                 }
                 "user" => {
                     let parts = if let Some(text) = content.and_then(|c| c.as_str()) {
                         vec![json!({"text": text})]
+                    } else if let Some(array) = content.and_then(|c| c.as_array()) {
+                        // Multimodal content: iterate parts and translate each block.
+                        array
+                            .iter()
+                            .filter_map(|part| {
+                                let part_type = part.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                                match part_type {
+                                    "text" => {
+                                        let text = part.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                                        Some(json!({"text": text}))
+                                    }
+                                    "image_url" => {
+                                        // Map OpenAI image_url to Bedrock image block.
+                                        let url = part.pointer("/image_url/url").and_then(|u| u.as_str()).unwrap_or("");
+                                        if let Some(data_part) = url.strip_prefix("data:") {
+                                            // data:{media_type};base64,{data}
+                                            let mut iter = data_part.splitn(2, ';');
+                                            let media_type = iter.next().unwrap_or("image/jpeg");
+                                            let b64 = iter.next().and_then(|s| s.strip_prefix("base64,")).unwrap_or("");
+                                            Some(json!({
+                                                "image": {
+                                                    "format": media_type.split('/').nth(1).unwrap_or("jpeg"),
+                                                    "source": {"bytes": b64}
+                                                }
+                                            }))
+                                        } else {
+                                            // Plain URL — not directly supported by Bedrock;
+                                            // include as text so the message is not silently dropped.
+                                            Some(json!({"text": url}))
+                                        }
+                                    }
+                                    _ => None,
+                                }
+                            })
+                            .collect()
                     } else {
-                        // Handle content parts array or fall back to string representation.
-                        let text_fallback = content.map(|c| c.to_string()).unwrap_or_default();
-                        vec![json!({"text": text_fallback})]
+                        // Fallback: represent unknown content as an empty text block.
+                        vec![json!({"text": ""})]
                     };
                     converse_messages.push(json!({"role": "user", "content": parts}));
                 }
@@ -235,13 +279,16 @@ impl Provider for BedrockProvider {
                 "tool" => {
                     let tool_call_id = msg.get("tool_call_id").and_then(|t| t.as_str()).unwrap_or("");
                     let result_text = content.and_then(|c| c.as_str()).unwrap_or("");
+                    // Determine status: treat explicit error markers as failures.
+                    let is_error = msg.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let status = if is_error { "error" } else { "success" };
                     converse_messages.push(json!({
                         "role": "user",
                         "content": [{
                             "toolResult": {
                                 "toolUseId": tool_call_id,
                                 "content": [{"text": result_text}],
-                                "status": "success"
+                                "status": status
                             }
                         }]
                     }));
@@ -360,7 +407,7 @@ impl Provider for BedrockProvider {
             "tool_use" => "tool_calls",
             "max_tokens" => "length",
             "stop_sequence" => "stop",
-            "content_filtered" => "content_filter",
+            "content_filtered" | "guardrail_intervened" => "content_filter",
             _ => "stop",
         };
 
@@ -520,9 +567,10 @@ mod tests {
     fn build_url_chat_completions() {
         let p = provider();
         let url = p.build_url("/chat/completions", "anthropic.claude-3-sonnet-20240229-v1:0");
+        // Colon must be uppercase-encoded per RFC 3986 §2.1.
         assert_eq!(
             url,
-            "https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-3-sonnet-20240229-v1%3a0/converse"
+            "https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-3-sonnet-20240229-v1%3A0/converse"
         );
     }
 
@@ -548,7 +596,12 @@ mod tests {
     #[test]
     fn percent_encode_model_colon() {
         let encoded = percent_encode_model("anthropic.claude-3-sonnet-20240229-v1:0");
-        assert!(encoded.contains("%3a"), "colon should be percent-encoded: {encoded}");
+        // RFC 3986 §2.1 requires uppercase hex digits.
+        assert!(
+            encoded.contains("%3A"),
+            "colon should be percent-encoded with uppercase hex: {encoded}"
+        );
+        assert!(!encoded.contains("%3a"), "lowercase hex must not appear: {encoded}");
         assert!(!encoded.contains(':'), "raw colon should not remain: {encoded}");
     }
 
@@ -729,6 +782,7 @@ mod tests {
             ("max_tokens", "length"),
             ("stop_sequence", "stop"),
             ("content_filtered", "content_filter"),
+            ("guardrail_intervened", "content_filter"),
             ("unknown_future_reason", "stop"),
         ] {
             let mut body = json!({

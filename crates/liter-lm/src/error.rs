@@ -72,6 +72,20 @@ pub enum LiterLmError {
 }
 
 impl LiterLmError {
+    /// Returns `true` for errors that are worth retrying on a different service
+    /// or deployment (transient failures).
+    ///
+    /// Used by [`crate::tower::fallback::FallbackService`] and
+    /// [`crate::tower::router::Router`] to decide whether to route to an
+    /// alternative endpoint.
+    #[must_use]
+    pub fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            Self::RateLimited { .. } | Self::ServiceUnavailable { .. } | Self::Timeout | Self::ServerError { .. }
+        )
+    }
+
     /// Return the OpenTelemetry `error.type` string for this error variant.
     ///
     /// Used by the tracing middleware to record the `error.type` span attribute
