@@ -10,7 +10,7 @@ use crate::provider::{Provider, unix_timestamp_secs};
 /// Differences from the OpenAI-compatible baseline:
 /// - Chat endpoint is `/chat` instead of `/chat/completions`.
 /// - Rerank endpoint is `/rerank` instead of the default path.
-/// - `stream` and `stream_options` are transport-level and must be stripped.
+/// - `stream_options` is an OpenAI-specific field and must be stripped; `stream` is kept (Cohere v2 requires it).
 /// - Finish reasons use Cohere-specific names (`COMPLETE`, `MAX_TOKENS`, `TOOL_CALL`).
 /// - Usage is reported under `tokens.input_tokens` / `tokens.output_tokens`.
 /// - Response may lack `object` and `created` fields.
@@ -48,9 +48,11 @@ impl Provider for CohereProvider {
     }
 
     /// Strip transport-level parameters that Cohere does not accept in the body.
+    ///
+    /// Note: Cohere v2 requires `stream` in the body, so only `stream_options`
+    /// (an OpenAI-specific field) is removed.
     fn transform_request(&self, body: &mut Value) -> Result<()> {
         if let Some(obj) = body.as_object_mut() {
-            obj.remove("stream");
             obj.remove("stream_options");
         }
         Ok(())
@@ -151,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cohere_transform_request_strips_stream() {
+    fn test_cohere_transform_request_preserves_stream_strips_options() {
         let provider = CohereProvider;
         let mut body = json!({
             "model": "command-r-plus",
@@ -160,7 +162,8 @@ mod tests {
             "stream_options": {"include_usage": true}
         });
         provider.transform_request(&mut body).expect("transform should succeed");
-        assert!(body.get("stream").is_none());
+        // Cohere v2 needs `stream` in the body — only `stream_options` is removed.
+        assert_eq!(body["stream"], true);
         assert!(body.get("stream_options").is_none());
         // Other fields preserved.
         assert_eq!(body["model"], "command-r-plus");

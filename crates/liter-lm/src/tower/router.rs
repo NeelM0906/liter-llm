@@ -310,7 +310,7 @@ fn weighted_random_select(weights: &[f64]) -> usize {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .subsec_nanos();
-    let threshold = (f64::from(nanos) / f64::from(u32::MAX)) * total;
+    let threshold = (f64::from(nanos) / 1_000_000_000.0) * total;
 
     let mut cumulative = 0.0;
     for (i, &w) in weights.iter().enumerate() {

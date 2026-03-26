@@ -345,11 +345,11 @@ impl Provider for OpenAiProvider {
             || model.starts_with("tts-")
             || model.starts_with("text-embedding-")
             || model.starts_with("chatgpt-")
+            || model.starts_with("openai/")
     }
 
     fn strip_model_prefix<'m>(&self, model: &'m str) -> &'m str {
-        // OpenAI models have no routing prefix.
-        model
+        model.strip_prefix("openai/").unwrap_or(model)
     }
 }
 

@@ -38,6 +38,8 @@ impl Provider for MistralProvider {
         model.starts_with("mistral-")
             || model.starts_with("codestral-")
             || model.starts_with("pixtral-")
+            || model.starts_with("ministral-")
+            || model.starts_with("open-mistral-")
             || model.starts_with("mistral/")
     }
 

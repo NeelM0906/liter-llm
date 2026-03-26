@@ -18,6 +18,8 @@ use crate::types::{
 
 // DefaultClient and its LlmClient impl require reqwest + tokio.
 #[cfg(feature = "native-http")]
+use crate::auth::Credential;
+#[cfg(feature = "native-http")]
 use crate::error::LiterLmError;
 #[cfg(feature = "native-http")]
 use crate::http;
@@ -184,17 +186,6 @@ impl DefaultClient {
         })
     }
 
-    /// Build the endpoint URL and return the cached auth header for a given path.
-    ///
-    /// Returns `(url, optional_auth_header)`.  The auth header is `None` when
-    /// the provider requires no authentication (e.g. local models or providers
-    /// with `auth: none`).  Extra headers are accessed separately via
-    /// `self.cached_extra_headers`.
-    fn prepare_headers(&self, endpoint_path: &str) -> (String, Option<(String, String)>) {
-        let url = format!("{}{}", self.provider.base_url(), endpoint_path);
-        (url, self.cached_auth_header.clone())
-    }
-
     /// Shared helper: build the URL, resolve auth header strings, strip model
     /// prefix from the request body, set the `stream` flag, apply provider
     /// transform, and return everything needed to fire a request.
@@ -239,6 +230,31 @@ impl DefaultClient {
         let body_bytes = bytes::Bytes::from(serde_json::to_vec(&body)?);
 
         Ok((url, auth_header, body, body_bytes))
+    }
+
+    /// Resolve the auth header for a request.
+    ///
+    /// When a [`CredentialProvider`] is configured, it is called to obtain a
+    /// fresh credential which overrides the pre-computed `cached_auth_header`.
+    /// Otherwise the cached header (built at construction from the static
+    /// `api_key`) is returned as-is.
+    async fn resolve_auth_header(&self) -> Result<Option<(String, String)>> {
+        if let Some(ref cp) = self.config.credential_provider {
+            let credential = cp.resolve().await?;
+            match credential {
+                Credential::BearerToken(token) => Ok(Some((
+                    "Authorization".to_owned(),
+                    format!("Bearer {}", token.expose_secret()),
+                ))),
+                Credential::AwsCredentials { .. } => {
+                    // AWS credentials are handled via signing_headers, not the auth header.
+                    // Return None so the normal auth header is skipped.
+                    Ok(None)
+                }
+            }
+        } else {
+            Ok(self.cached_auth_header.clone())
+        }
     }
 
     /// Build the combined header list for a request.
@@ -297,9 +313,10 @@ impl LlmClient for DefaultClient {
     fn chat(&self, req: ChatCompletionRequest) -> BoxFuture<'_, ChatCompletionResponse> {
         Box::pin(async move {
             // Pass stream=false so providers can inspect the flag in transform_request.
-            let (url, auth_header, body_json, body_bytes) =
+            let (url, _cached_auth, body_json, body_bytes) =
                 self.prepare_request(&req, self.provider.chat_completions_path(), &req.model, Some(false))?;
 
+            let auth_header = self.resolve_auth_header().await?;
             let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
             let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
 
@@ -315,20 +332,20 @@ impl LlmClient for DefaultClient {
     fn chat_stream(&self, req: ChatCompletionRequest) -> BoxFuture<'_, BoxStream<'_, ChatCompletionChunk>> {
         Box::pin(async move {
             // Use prepare_request for validation, model-prefix stripping, and
-            // transform_request — then override the URL for streaming providers.
-            let (mut url, auth_header, body_json, body_bytes) =
+            // transform_request — then override the URL via build_stream_url.
+            let (_base_url, _cached_auth, body_json, body_bytes) =
                 self.prepare_request(&req, self.provider.chat_completions_path(), &req.model, Some(true))?;
 
-            // Providers with a distinct streaming endpoint (e.g. Bedrock
-            // /converse-stream) need a different URL than what prepare_request
-            // built via build_url.
-            if self.provider.stream_format() == provider::StreamFormat::AwsEventStream {
-                let bare_model = self.provider.strip_model_prefix(&req.model);
-                url = self
-                    .provider
-                    .build_stream_url(self.provider.chat_completions_path(), bare_model);
-            }
+            // Always use build_stream_url for the streaming endpoint.
+            // The default implementation delegates to build_url, so this is safe
+            // for all providers.  Providers with a distinct streaming endpoint
+            // (e.g. Bedrock /converse-stream) override build_stream_url.
+            let bare_model = self.provider.strip_model_prefix(&req.model);
+            let url = self
+                .provider
+                .build_stream_url(self.provider.chat_completions_path(), bare_model);
 
+            let auth_header = self.resolve_auth_header().await?;
             let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
             let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
             let auth = auth_header.as_ref().map(str_pair);
@@ -369,9 +386,10 @@ impl LlmClient for DefaultClient {
     fn embed(&self, req: EmbeddingRequest) -> BoxFuture<'_, EmbeddingResponse> {
         Box::pin(async move {
             // Embeddings have no stream flag; pass None so it is not inserted.
-            let (url, auth_header, body_json, body_bytes) =
+            let (url, _cached_auth, body_json, body_bytes) =
                 self.prepare_request(&req, self.provider.embeddings_path(), &req.model, None)?;
 
+            let auth_header = self.resolve_auth_header().await?;
             let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
             let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
 
@@ -386,7 +404,9 @@ impl LlmClient for DefaultClient {
 
     fn list_models(&self) -> BoxFuture<'_, ModelsListResponse> {
         Box::pin(async move {
-            let (url, auth_header) = self.prepare_headers(self.provider.models_path());
+            // Use build_url so providers like Azure/Bedrock can customise the URL.
+            let url = self.provider.build_url(self.provider.models_path(), "");
+            let auth_header = self.resolve_auth_header().await?;
             let auth = auth_header.as_ref().map(str_pair);
             // list_models is a GET request; signing headers use an empty body,
             // and dynamic_headers receives a null JSON value.
@@ -400,9 +420,10 @@ impl LlmClient for DefaultClient {
     fn image_generate(&self, req: CreateImageRequest) -> BoxFuture<'_, ImagesResponse> {
         Box::pin(async move {
             let model = req.model.as_deref().unwrap_or_default();
-            let (url, auth_header, body_json, body_bytes) =
+            let (url, _cached_auth, body_json, body_bytes) =
                 self.prepare_request(&req, self.provider.image_generations_path(), model, None)?;
 
+            let auth_header = self.resolve_auth_header().await?;
             let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
             let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
 
@@ -417,9 +438,10 @@ impl LlmClient for DefaultClient {
 
     fn speech(&self, req: CreateSpeechRequest) -> BoxFuture<'_, bytes::Bytes> {
         Box::pin(async move {
-            let (url, auth_header, body_json, body_bytes) =
+            let (url, _cached_auth, body_json, body_bytes) =
                 self.prepare_request(&req, self.provider.audio_speech_path(), &req.model, None)?;
 
+            let auth_header = self.resolve_auth_header().await?;
             let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
             let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
 
@@ -430,9 +452,10 @@ impl LlmClient for DefaultClient {
 
     fn transcribe(&self, req: CreateTranscriptionRequest) -> BoxFuture<'_, TranscriptionResponse> {
         Box::pin(async move {
-            let (url, auth_header, body_json, body_bytes) =
+            let (url, _cached_auth, body_json, body_bytes) =
                 self.prepare_request(&req, self.provider.audio_transcriptions_path(), &req.model, None)?;
 
+            let auth_header = self.resolve_auth_header().await?;
             let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
             let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
 
@@ -448,9 +471,10 @@ impl LlmClient for DefaultClient {
     fn moderate(&self, req: ModerationRequest) -> BoxFuture<'_, ModerationResponse> {
         Box::pin(async move {
             let model = req.model.as_deref().unwrap_or_default();
-            let (url, auth_header, body_json, body_bytes) =
+            let (url, _cached_auth, body_json, body_bytes) =
                 self.prepare_request(&req, self.provider.moderations_path(), model, None)?;
 
+            let auth_header = self.resolve_auth_header().await?;
             let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
             let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
 
@@ -465,9 +489,10 @@ impl LlmClient for DefaultClient {
 
     fn rerank(&self, req: RerankRequest) -> BoxFuture<'_, RerankResponse> {
         Box::pin(async move {
-            let (url, auth_header, body_json, body_bytes) =
+            let (url, _cached_auth, body_json, body_bytes) =
                 self.prepare_request(&req, self.provider.rerank_path(), &req.model, None)?;
 
+            let auth_header = self.resolve_auth_header().await?;
             let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
             let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
 

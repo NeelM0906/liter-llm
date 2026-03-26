@@ -58,7 +58,7 @@ tasks:
     cmds:
       - echo "Updating Elixir dependencies to latest versions..."
       - cmd: echo "Note - Elixir requires manual mix.exs edits for major version updates"
-      - mix hex.outdated
+      - mix hex.outdated || true
       - mix deps.update --all
       - echo "Checking remaining outdated dependencies..."
       - mix hex.outdated || true

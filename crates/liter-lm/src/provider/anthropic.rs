@@ -343,6 +343,7 @@ impl Provider for AnthropicProvider {
                 "service_tier",
                 "user",
                 "reasoning_effort",
+                "extra_body",
             ] {
                 obj.remove(*key);
             }

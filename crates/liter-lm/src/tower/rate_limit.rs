@@ -2,7 +2,7 @@
 //!
 //! [`ModelRateLimitLayer`] wraps any [`Service<LlmRequest>`] and enforces
 //! per-model request-per-minute (RPM) and token-per-minute (TPM) limits using
-//! a sliding window.  When a model exceeds its configured limit the middleware
+//! a fixed window.  When a model exceeds its configured limit the middleware
 //! returns [`LiterLmError::RateLimited`] without forwarding the request to the
 //! inner service.  After a successful response, token usage is extracted and
 //! added to the running count.
@@ -30,7 +30,7 @@ pub struct RateLimitConfig {
     pub rpm: Option<u32>,
     /// Maximum tokens per window.  `None` means unlimited.
     pub tpm: Option<u64>,
-    /// Sliding window duration (defaults to 60 s).
+    /// Fixed window duration (defaults to 60 s).
     pub window: Duration,
 }
 
