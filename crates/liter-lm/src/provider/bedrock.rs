@@ -3,7 +3,8 @@ use std::borrow::Cow;
 #[cfg(feature = "bedrock")]
 use crate::error::LiterLmError;
 use crate::error::Result;
-use crate::provider::Provider;
+use crate::provider::{Provider, StreamFormat};
+use crate::types::ChatCompletionChunk;
 
 /// Default AWS region for Bedrock when none is specified.
 const DEFAULT_REGION: &str = "us-east-1";
@@ -148,6 +149,11 @@ impl Provider for BedrockProvider {
         Ok(())
     }
 
+    /// Bedrock uses AWS EventStream binary framing, not SSE.
+    fn stream_format(&self) -> StreamFormat {
+        StreamFormat::AwsEventStream
+    }
+
     /// Build the full URL for a Bedrock Converse API request.
     ///
     /// Chat completions map to `/model/{encoded_model}/converse`.
@@ -157,13 +163,23 @@ impl Provider for BedrockProvider {
         let base = self.base_url();
         let encoded_model = percent_encode_model(model);
         if endpoint_path.contains("chat/completions") {
-            // TODO: streaming will need `/model/{model}/converse-stream`
-            // (binary EventStream, not SSE) — deferred to a future release.
             format!("{base}/model/{encoded_model}/converse")
         } else if endpoint_path.contains("embeddings") {
             format!("{base}/model/{encoded_model}/invoke")
         } else {
             format!("{base}{endpoint_path}")
+        }
+    }
+
+    /// Build the streaming URL: `/model/{id}/converse-stream`.
+    fn build_stream_url(&self, endpoint_path: &str, model: &str) -> String {
+        let base = self.base_url();
+        let encoded_model = percent_encode_model(model);
+        if endpoint_path.contains("chat/completions") {
+            format!("{base}/model/{encoded_model}/converse-stream")
+        } else {
+            // Non-chat streaming falls back to the regular URL.
+            self.build_url(endpoint_path, model)
         }
     }
 
@@ -477,6 +493,175 @@ impl Provider for BedrockProvider {
     }
 }
 
+/// Parse a Bedrock ConverseStream EventStream event into a `ChatCompletionChunk`.
+///
+/// Bedrock ConverseStream events:
+/// - `messageStart` → role delta
+/// - `contentBlockStart` → tool_use start (with toolUseId and name)
+/// - `contentBlockDelta` → text delta or tool_use input delta
+/// - `contentBlockStop` → (ignored)
+/// - `messageStop` → finish_reason
+/// - `metadata` → usage (emitted as a final chunk with empty delta)
+///
+/// Returns `Ok(None)` for events that don't map to a chunk (e.g. `contentBlockStop`).
+pub(crate) fn parse_bedrock_stream_event(event_type: &str, payload: &str) -> Result<Option<ChatCompletionChunk>> {
+    use crate::error::LiterLmError;
+    use serde_json::json;
+
+    let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| LiterLmError::Streaming {
+        message: format!("Bedrock stream event parse error: {e}"),
+    })?;
+
+    let chunk_from_json = |chunk_json: serde_json::Value| -> Result<ChatCompletionChunk> {
+        serde_json::from_value(chunk_json).map_err(|e| LiterLmError::Streaming {
+            message: format!("Bedrock chunk deserialization error: {e}"),
+        })
+    };
+
+    match event_type {
+        "messageStart" => {
+            let role = v.get("role").and_then(|r| r.as_str()).unwrap_or("assistant");
+            chunk_from_json(json!({
+                "id": "bedrock-stream",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "",
+                "choices": [{
+                    "index": 0,
+                    "delta": {"role": role},
+                    "finish_reason": null
+                }]
+            }))
+            .map(Some)
+        }
+        "contentBlockStart" => {
+            let index = v.get("contentBlockIndex").and_then(|i| i.as_u64()).unwrap_or(0);
+            // Check if this is a tool_use start.
+            if let Some(tool_use) = v.pointer("/start/toolUse") {
+                let tool_use_id = tool_use.get("toolUseId").and_then(|t| t.as_str()).unwrap_or("");
+                let name = tool_use.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                chunk_from_json(json!({
+                    "id": "bedrock-stream",
+                    "object": "chat.completion.chunk",
+                    "created": 0,
+                    "model": "",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [{
+                                "index": index,
+                                "id": tool_use_id,
+                                "type": "function",
+                                "function": {"name": name, "arguments": ""}
+                            }]
+                        },
+                        "finish_reason": null
+                    }]
+                }))
+                .map(Some)
+            } else {
+                // Text content block start — no delta content yet.
+                Ok(None)
+            }
+        }
+        "contentBlockDelta" => {
+            let index = v.get("contentBlockIndex").and_then(|i| i.as_u64()).unwrap_or(0);
+
+            // Text delta.
+            if let Some(text) = v.pointer("/delta/text").and_then(|t| t.as_str()) {
+                return chunk_from_json(json!({
+                    "id": "bedrock-stream",
+                    "object": "chat.completion.chunk",
+                    "created": 0,
+                    "model": "",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"content": text},
+                        "finish_reason": null
+                    }]
+                }))
+                .map(Some);
+            }
+
+            // Tool use input delta.
+            if let Some(input_json) = v.pointer("/delta/toolUse/input").and_then(|i| i.as_str()) {
+                return chunk_from_json(json!({
+                    "id": "bedrock-stream",
+                    "object": "chat.completion.chunk",
+                    "created": 0,
+                    "model": "",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [{
+                                "index": index,
+                                "function": {"arguments": input_json}
+                            }]
+                        },
+                        "finish_reason": null
+                    }]
+                }))
+                .map(Some);
+            }
+
+            // Unrecognized delta shape — log so callers know data was skipped.
+            #[cfg(feature = "tracing")]
+            tracing::debug!(
+                content_block_index = index,
+                "Bedrock contentBlockDelta with unrecognized delta shape; skipping"
+            );
+
+            Ok(None)
+        }
+        "contentBlockStop" => Ok(None),
+        "messageStop" => {
+            let stop_reason = v.get("stopReason").and_then(|s| s.as_str()).unwrap_or("end_turn");
+            let finish_reason = match stop_reason {
+                "end_turn" => "stop",
+                "tool_use" => "tool_calls",
+                "max_tokens" => "length",
+                "stop_sequence" => "stop",
+                "content_filtered" | "guardrail_intervened" => "content_filter",
+                _ => "stop",
+            };
+            chunk_from_json(json!({
+                "id": "bedrock-stream",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "",
+                "choices": [{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": finish_reason
+                }]
+            }))
+            .map(Some)
+        }
+        "metadata" => {
+            // Emit usage as a final chunk with empty choices.
+            let input_tokens = v.pointer("/usage/inputTokens").and_then(|t| t.as_u64()).unwrap_or(0);
+            let output_tokens = v.pointer("/usage/outputTokens").and_then(|t| t.as_u64()).unwrap_or(0);
+            chunk_from_json(json!({
+                "id": "bedrock-stream",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "",
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": input_tokens,
+                    "completion_tokens": output_tokens,
+                    "total_tokens": input_tokens + output_tokens
+                }
+            }))
+            .map(Some)
+        }
+        _ => {
+            // Unknown event type — skip silently.
+            Ok(None)
+        }
+    }
+}
+
 /// Compute AWS SigV4 signing headers using the `aws-sigv4` crate.
 ///
 /// Reads credentials from the standard AWS environment variables:
@@ -556,6 +741,7 @@ mod tests {
 
     use super::*;
     use crate::provider::Provider;
+    use crate::types::chat::FinishReason;
 
     fn provider() -> BedrockProvider {
         BedrockProvider::new("us-east-1")
@@ -813,5 +999,114 @@ mod tests {
         assert!(p.matches_model("bedrock/anthropic.claude-3"));
         assert!(!p.matches_model("anthropic.claude-3"));
         assert!(!p.matches_model("gpt-4"));
+    }
+
+    // ── stream_format ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn stream_format_is_eventstream() {
+        let p = provider();
+        assert_eq!(p.stream_format(), StreamFormat::AwsEventStream);
+    }
+
+    // ── build_stream_url ──────────────────────────────────────────────────────
+
+    #[test]
+    fn build_stream_url_chat_completions() {
+        let p = provider();
+        let url = p.build_stream_url("/chat/completions", "anthropic.claude-3-sonnet-20240229-v1:0");
+        assert_eq!(
+            url,
+            "https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-3-sonnet-20240229-v1%3A0/converse-stream"
+        );
+    }
+
+    #[test]
+    fn build_stream_url_non_chat_falls_back() {
+        let p = provider();
+        let url = p.build_stream_url("/embeddings", "amazon.titan-embed-text-v1");
+        assert_eq!(
+            url,
+            "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.titan-embed-text-v1/invoke"
+        );
+    }
+
+    // ── parse_bedrock_stream_event ────────────────────────────────────────────
+
+    #[test]
+    fn parse_stream_event_message_start() {
+        let chunk = parse_bedrock_stream_event("messageStart", r#"{"role":"assistant"}"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(chunk.choices[0].delta.role.as_deref(), Some("assistant"));
+    }
+
+    #[test]
+    fn parse_stream_event_text_delta() {
+        let chunk = parse_bedrock_stream_event(
+            "contentBlockDelta",
+            r#"{"contentBlockIndex":0,"delta":{"text":"Hello world"}}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("Hello world"));
+    }
+
+    #[test]
+    fn parse_stream_event_tool_use_start() {
+        let chunk = parse_bedrock_stream_event(
+            "contentBlockStart",
+            r#"{"contentBlockIndex":0,"start":{"toolUse":{"toolUseId":"call_123","name":"get_weather"}}}"#,
+        )
+        .unwrap()
+        .unwrap();
+        let tc = &chunk.choices[0].delta.tool_calls.as_ref().unwrap()[0];
+        assert_eq!(tc.id.as_deref(), Some("call_123"));
+        assert_eq!(tc.function.as_ref().unwrap().name.as_deref(), Some("get_weather"));
+    }
+
+    #[test]
+    fn parse_stream_event_tool_use_input_delta() {
+        let chunk = parse_bedrock_stream_event(
+            "contentBlockDelta",
+            r#"{"contentBlockIndex":0,"delta":{"toolUse":{"input":"{\"city\":\"Berlin\"}"}}}"#,
+        )
+        .unwrap()
+        .unwrap();
+        let tc = &chunk.choices[0].delta.tool_calls.as_ref().unwrap()[0];
+        assert_eq!(
+            tc.function.as_ref().unwrap().arguments.as_deref(),
+            Some("{\"city\":\"Berlin\"}")
+        );
+    }
+
+    #[test]
+    fn parse_stream_event_message_stop() {
+        let chunk = parse_bedrock_stream_event("messageStop", r#"{"stopReason":"end_turn"}"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(chunk.choices[0].finish_reason, Some(FinishReason::Stop));
+    }
+
+    #[test]
+    fn parse_stream_event_metadata_usage() {
+        let chunk = parse_bedrock_stream_event("metadata", r#"{"usage":{"inputTokens":42,"outputTokens":10}}"#)
+            .unwrap()
+            .unwrap();
+        let usage = chunk.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 42);
+        assert_eq!(usage.completion_tokens, 10);
+    }
+
+    #[test]
+    fn parse_stream_event_content_block_stop_returns_none() {
+        let result = parse_bedrock_stream_event("contentBlockStop", r#"{"contentBlockIndex":0}"#).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_stream_event_unknown_returns_none() {
+        let result = parse_bedrock_stream_event("futureEventType", r#"{}"#).unwrap();
+        assert!(result.is_none());
     }
 }

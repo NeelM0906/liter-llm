@@ -6,6 +6,18 @@ use serde::Deserialize;
 
 use crate::error::{LiterLmError, Result};
 
+/// The streaming wire format a provider uses for its response stream.
+///
+/// Most providers use standard Server-Sent Events (SSE).  AWS Bedrock uses
+/// a proprietary binary EventStream framing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamFormat {
+    /// Standard Server-Sent Events (text/event-stream).
+    Sse,
+    /// AWS EventStream binary framing (application/vnd.amazon.eventstream).
+    AwsEventStream,
+}
+
 // Embed the generated providers registry at compile time.
 // Path: crates/liter-lm/src/provider/mod.rs → ../../../../schemas/providers.json
 const PROVIDERS_JSON: &str = include_str!("../../../../schemas/providers.json");
@@ -205,6 +217,23 @@ pub trait Provider: Send + Sync {
             .map_err(|e| LiterLmError::Streaming {
                 message: format!("failed to parse SSE data: {e}"),
             })
+    }
+
+    /// The streaming wire format this provider uses.
+    ///
+    /// Default: [`StreamFormat::Sse`].  Override for providers that use
+    /// non-SSE framing (e.g. AWS Bedrock EventStream).
+    fn stream_format(&self) -> StreamFormat {
+        StreamFormat::Sse
+    }
+
+    /// Build the full URL for a streaming request.
+    ///
+    /// Default: delegates to [`Provider::build_url`].  Providers whose
+    /// streaming endpoint differs from the non-streaming one (e.g. Bedrock
+    /// uses `/converse-stream` vs `/converse`) override this.
+    fn build_stream_url(&self, endpoint_path: &str, model: &str) -> String {
+        self.build_url(endpoint_path, model)
     }
 
     /// Compute dynamic signing headers for the outgoing request.

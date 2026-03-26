@@ -260,29 +260,56 @@ impl LlmClient for DefaultClient {
 
     fn chat_stream(&self, req: ChatCompletionRequest) -> BoxFuture<'_, BoxStream<'_, ChatCompletionChunk>> {
         Box::pin(async move {
-            // Pass stream=true so providers can inspect the flag in transform_request.
-            let (url, auth_header, body) =
+            // Use prepare_request for validation, model-prefix stripping, and
+            // transform_request — then override the URL for streaming providers.
+            let (mut url, auth_header, body) =
                 self.prepare_request(&req, self.provider.chat_completions_path(), &req.model, Some(true))?;
+
+            // Providers with a distinct streaming endpoint (e.g. Bedrock
+            // /converse-stream) need a different URL than what prepare_request
+            // built via build_url.
+            if self.provider.stream_format() == provider::StreamFormat::AwsEventStream {
+                let bare_model = self.provider.strip_model_prefix(&req.model);
+                url = self
+                    .provider
+                    .build_stream_url(self.provider.chat_completions_path(), bare_model);
+            }
 
             let body_bytes = serde_json::to_vec(&body)?;
             let all_headers = self.all_headers("POST", &url, &body_bytes);
             let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
-
             let auth = auth_header.as_ref().map(str_pair);
-            // Clone the Arc so the streaming closure is 'static (owns the provider).
-            let provider = Arc::clone(&self.provider);
-            let parse_event = move |data: &str| provider.parse_stream_event(data);
-            let stream = http::streaming::post_stream(
-                &self.http,
-                &url,
-                auth,
-                &extra,
-                body,
-                self.config.max_retries,
-                parse_event,
-            )
-            .await?;
-            Ok(stream)
+
+            match self.provider.stream_format() {
+                provider::StreamFormat::Sse => {
+                    let provider = Arc::clone(&self.provider);
+                    let parse_event = move |data: &str| provider.parse_stream_event(data);
+                    let stream = http::streaming::post_stream(
+                        &self.http,
+                        &url,
+                        auth,
+                        &extra,
+                        body,
+                        self.config.max_retries,
+                        parse_event,
+                    )
+                    .await?;
+                    Ok(stream)
+                }
+                provider::StreamFormat::AwsEventStream => {
+                    let stream = http::eventstream::post_eventstream(
+                        &self.http,
+                        &url,
+                        auth,
+                        &extra,
+                        body,
+                        self.config.max_retries,
+                        provider::bedrock::parse_bedrock_stream_event,
+                    )
+                    .await?;
+                    Ok(stream)
+                }
+            }
         })
     }
 
