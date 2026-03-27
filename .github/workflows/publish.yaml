@@ -419,7 +419,7 @@ jobs:
       - run: pip install maturin
         shell: bash
       - name: Build sdist
-        run: maturin sdist --manifest-path crates/liter-llm-py/Cargo.toml --out dist
+        run: maturin sdist --out dist
         working-directory: packages/python
         shell: bash
       - uses: actions/upload-artifact@v7
@@ -463,14 +463,14 @@ jobs:
           target: ${{ matrix.napi_target }}
       - uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version: 22
       - run: npm install -g @napi-rs/cli
         shell: bash
       - name: Build NAPI binding
         run: napi build --release --platform --target ${{ matrix.napi_target }}
         working-directory: crates/liter-llm-node
         shell: bash
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v8
         with:
           name: node-native-${{ matrix.label }}
           path: crates/liter-llm-node/*.node
@@ -522,7 +522,7 @@ jobs:
       - name: Pack WASM tarball
         run: cd crates/liter-llm-wasm && mkdir -p dist && npm pack pkg/ --pack-destination dist/
         shell: bash
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v8
         with:
           name: wasm-pkg
           path: crates/liter-llm-wasm/dist/*.tgz
@@ -1063,75 +1063,130 @@ jobs:
           packages-dir: dist/
 
   publish-node:
-    name: Publish npm (Node native + TypeScript)
+    name: Publish Node packages
     needs: [prepare, validate-versions, check-npm, build-node-native]
     if: |
       always() &&
+      needs.prepare.outputs.dry_run != 'true' &&
       needs.prepare.outputs.release_node == 'true' &&
-      needs.build-node-native.result == 'success' &&
-      (needs.check-npm.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true')
+      needs.check-npm.outputs.exists != 'true' &&
+      needs.build-node-native.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare.outputs.tag }}
-      - uses: actions/setup-node@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v5
         with:
-          node-version: "24"
-          registry-url: "https://registry.npmjs.org"
-      - run: npm install -g @napi-rs/cli pnpm
-        shell: bash
-      - name: Download all .node artifacts
-        uses: actions/download-artifact@v7
+          package_json_file: package.json
+
+      - name: Download Node artifacts
+        uses: actions/download-artifact@v8
         with:
           pattern: node-native-*
           path: crates/liter-llm-node/artifacts
           merge-multiple: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org/
+
+      - name: Update NPM
+        run: npm install -g npm
+        shell: bash
+
+      - name: Install @napi-rs/cli
+        run: npm install -g @napi-rs/cli
+        shell: bash
+
       - name: Assemble NAPI platform packages
         run: |
           napi artifacts --output-dir artifacts --npm-dir npm
           napi prepublish -t npm --skip-optional-publish
         working-directory: crates/liter-llm-node
         shell: bash
-      - name: Re-check npm before publishing
-        uses: kreuzberg-dev/actions/check-registry@v1
-        id: recheck
-        with:
-          registry: npm
-          package: "@kreuzberg/liter-llm"
-          version: ${{ needs.prepare.outputs.version }}
-      - name: Publish platform packages
-        if: needs.prepare.outputs.dry_run != 'true' && (steps.recheck.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true')
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
+
+      - name: Node artifacts summary
+        if: ${{ needs.prepare.outputs.dry_run == 'true' }}
+        run: (echo "Dry run requested; Node binding tarballs staged:" && find crates/liter-llm-node/artifacts -name '*.node' -print) >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install workspace dependencies
+        if: ${{ needs.prepare.outputs.dry_run != 'true' }}
+        run: pnpm install -C crates/liter-llm-node
+
+      - name: Pack platform packages
         run: |
           for pkg_dir in crates/liter-llm-node/npm/*/; do
-            echo "Publishing $pkg_dir..."
-            npm publish "$pkg_dir" --tag "$NPM_TAG" --access public
+            echo "Packing $pkg_dir..."
+            npm pack "$pkg_dir"
           done
-        shell: bash
-      - name: Publish @kreuzberg/liter-llm-native
-        if: needs.prepare.outputs.dry_run != 'true' && (steps.recheck.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true')
+
+      - name: Re-check npm before publish
+        id: recheck
+        uses: kreuzberg-dev/actions/check-registry@v1
+        with:
+          registry: npm
+          package: "@kreuzberg/liter-llm-native"
+          version: ${{ needs.prepare.outputs.version }}
+
+      - name: Publish native binary packages
+        if: ${{ needs.prepare.outputs.dry_run != 'true' && steps.recheck.outputs.exists != 'true' }}
+        uses: kreuzberg-dev/actions/publish-npm@v1
+        with:
+          packages-dir: crates/liter-llm-node/npm
+          npm-tag: ${{ needs.prepare.outputs.npm_tag }}
+          dry-run: ${{ needs.prepare.outputs.dry_run }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
-        run: npm publish --tag "$NPM_TAG" --access public
-        working-directory: crates/liter-llm-node
-        shell: bash
+
+      - name: Wait for npm indexing (x64)
+        if: ${{ needs.prepare.outputs.dry_run != 'true' && steps.recheck.outputs.exists != 'true' }}
+        uses: kreuzberg-dev/actions/wait-for-package@v1
+        with:
+          registry: npm
+          package: "@kreuzberg/liter-llm-native-linux-x64-gnu"
+          version: ${{ needs.prepare.outputs.version }}
+          max-attempts: "25"
+
+      - name: Wait for npm indexing (ARM64)
+        if: ${{ needs.prepare.outputs.dry_run != 'true' && steps.recheck.outputs.exists != 'true' }}
+        uses: kreuzberg-dev/actions/wait-for-package@v1
+        with:
+          registry: npm
+          package: "@kreuzberg/liter-llm-native-linux-arm64-gnu"
+          version: ${{ needs.prepare.outputs.version }}
+          max-attempts: "25"
+
+      - name: Publish main Node package
+        if: ${{ needs.prepare.outputs.dry_run != 'true' && steps.recheck.outputs.exists != 'true' }}
+        uses: kreuzberg-dev/actions/publish-npm@v1
+        with:
+          package-dir: crates/liter-llm-node
+          npm-tag: ${{ needs.prepare.outputs.npm_tag }}
+          dry-run: ${{ needs.prepare.outputs.dry_run }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Wait for @kreuzberg/liter-llm-native to be available
-        if: needs.prepare.outputs.dry_run != 'true'
+        if: ${{ needs.prepare.outputs.dry_run != 'true' && steps.recheck.outputs.exists != 'true' }}
         uses: kreuzberg-dev/actions/wait-for-package@v1
         with:
           registry: npm
           package: "@kreuzberg/liter-llm-native"
           version: ${{ needs.prepare.outputs.version }}
+          max-attempts: "25"
+
       - name: Build and publish @kreuzberg/liter-llm (TypeScript)
-        if: needs.prepare.outputs.dry_run != 'true' && (steps.recheck.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true')
+        if: ${{ needs.prepare.outputs.dry_run != 'true' && steps.recheck.outputs.exists != 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
@@ -1142,31 +1197,75 @@ jobs:
         working-directory: packages/typescript
         shell: bash
 
+      - name: npm already published summary
+        if: ${{ steps.recheck.outputs.exists == 'true' }}
+        run: echo "Node package @kreuzberg/liter-llm-native@${{ needs.prepare.outputs.version }} already published on npm — skipped." >> "$GITHUB_STEP_SUMMARY"
+
   publish-wasm:
-    name: Publish npm (WASM)
-    needs: [prepare, validate-versions, check-npm-wasm, build-wasm]
+    name: Publish WASM package
+    needs: [prepare, validate-versions, check-npm-wasm, build-wasm, publish-node]
     if: |
       always() &&
+      needs.prepare.outputs.dry_run != 'true' &&
       needs.prepare.outputs.release_wasm == 'true' &&
-      needs.build-wasm.result == 'success' &&
-      (needs.check-npm-wasm.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true')
+      needs.check-npm-wasm.outputs.exists != 'true' &&
+      needs.build-wasm.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
-      - uses: actions/download-artifact@v7
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v8
         with:
           name: wasm-pkg
           path: dist
-      - uses: kreuzberg-dev/actions/publish-npm@v1
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
         with:
-          packages-dir: dist
+          node-version: 22
+          registry-url: https://registry.npmjs.org/
+
+      - name: Check if version already published to npm
+        id: npm_check
+        run: |
+          VERSION=$(jq -r '.version' dist/package.json)
+          STATUS=$(npm view "@kreuzberg/liter-llm-wasm@${VERSION}" version 2>/dev/null || echo "")
+          if [ "$STATUS" = "$VERSION" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+        shell: bash
+
+      - name: Publish to npm
+        if: ${{ steps.npm_check.outputs.exists != 'true' }}
+        uses: kreuzberg-dev/actions/publish-npm@v1
+        with:
+          package-dir: dist
           npm-tag: ${{ needs.prepare.outputs.npm_tag }}
-          dry-run: ${{ needs.prepare.outputs.dry_run }}
+          provenance: "true"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Wait for npm indexing
+        if: ${{ steps.npm_check.outputs.exists != 'true' }}
+        uses: kreuzberg-dev/actions/wait-for-package@v1
+        with:
+          registry: npm
+          package: "@kreuzberg/liter-llm-wasm"
+          version: ${{ needs.prepare.outputs.version }}
+          max-attempts: "25"
+
+      - name: Publish summary
+        run: |
+          if [ "${{ steps.npm_check.outputs.exists }}" = "true" ]; then
+            echo "WASM package @kreuzberg/liter-llm-wasm@${{ needs.prepare.outputs.version }} already published on npm — skipped." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Published @kreuzberg/liter-llm-wasm@${{ needs.prepare.outputs.version }} to npm." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   publish-rubygems:
     name: Publish RubyGems
