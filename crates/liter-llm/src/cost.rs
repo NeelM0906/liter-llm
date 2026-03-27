@@ -25,7 +25,7 @@ use serde::Deserialize;
 
 // Embedded at compile time so the binary is self-contained with no runtime
 // file-system dependency.
-const PRICING_JSON: &str = include_str!("../../../schemas/pricing.json");
+const PRICING_JSON: &str = include_str!("../schemas/pricing.json");
 
 /// Lazy-initialised registry parsed from the embedded JSON.
 /// Stores a `Result` so that parse failures surface at call time rather than

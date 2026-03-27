@@ -32,8 +32,7 @@ pub enum StreamFormat {
 }
 
 // Embed the generated providers registry at compile time.
-// Path: crates/liter-llm/src/provider/mod.rs → ../../../../schemas/providers.json
-const PROVIDERS_JSON: &str = include_str!("../../../../schemas/providers.json");
+const PROVIDERS_JSON: &str = include_str!("../../schemas/providers.json");
 
 /// Lazy-initialised registry parsed from the embedded JSON.
 /// Stores a `Result` so that parse failures surface at call time rather than
