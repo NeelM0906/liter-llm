@@ -192,14 +192,18 @@ fn write_spec_file(dir: &Utf8Path, category: &str, fixtures: &[&Fixture]) -> Res
     writeln!(out, "import {{ LlmClient }} from \"liter-llm-wasm\";").unwrap();
     writeln!(out).unwrap();
 
-    for fixture in fixtures {
-        if fixture.skip.languages.iter().any(|l| l == "wasm") {
-            continue;
-        }
-        // Skip chat_stream fixtures — WASM binding doesn't support streaming yet.
-        if fixture.api.method == "chat_stream" {
-            continue;
-        }
+    let active_fixtures: Vec<_> = fixtures
+        .iter()
+        .filter(|f| !f.skip.languages.iter().any(|l| l == "wasm"))
+        .filter(|f| f.api.method != "chat_stream")
+        .collect();
+
+    // Skip writing the file entirely if no fixtures remain after filtering.
+    if active_fixtures.is_empty() {
+        return Ok(());
+    }
+
+    for fixture in &active_fixtures {
         write_describe_block(&mut out, fixture);
     }
 
