@@ -1347,28 +1347,43 @@ jobs:
     runs-on: ubuntu-latest
     environment: hex
     permissions:
-      contents: read
+      contents: write
       id-token: write
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Generate checksums from GitHub release
+        run: ./scripts/publish/generate_elixir_checksums.sh "${{ needs.prepare.outputs.version }}"
+        shell: bash
+
+      - name: Commit updated checksum file to main
+        if: needs.prepare.outputs.dry_run != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/elixir/checksum-Elixir.LiterLlm.Native.exs
+          if git diff --cached --quiet; then
+            echo "No checksum changes to commit"
+          else
+            git commit -m "chore: update Elixir NIF checksums for v${{ needs.prepare.outputs.version }}"
+            git push origin HEAD:refs/heads/main || echo "Push failed (non-critical)"
+          fi
+        shell: bash
+
       - uses: erlef/setup-beam@v1
         with:
           elixir-version: "1.17"
           otp-version: "27"
+
       - name: Install Mix dependencies
         run: mix local.hex --force && mix local.rebar --force && mix deps.get
         working-directory: packages/elixir
         shell: bash
-      - name: Generate NIF checksums from GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mix rustler_precompiled.download LiterLlm.Native --all --ignore-unavailable
-        working-directory: packages/elixir
-        shell: bash
+
       - uses: kreuzberg-dev/actions/publish-hex@v1
         with:
           package-dir: packages/elixir
