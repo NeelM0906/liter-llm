@@ -10,14 +10,14 @@
     <Version>1.0.0-rc.1</Version>
     <Authors>kreuzberg.dev</Authors>
     <Company>kreuzberg.dev</Company>
-    <Description>High-performance LLM client for .NET powered by Rust. Unified interface for streaming completions, tool calling, and provider routing across OpenAI, Anthropic, and 50+ LLM providers.</Description>
+    <Description>Universal LLM API client for .NET. Unified interface for streaming, tool calling, and provider routing across 142+ providers. Rust-powered.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/kreuzberg-dev/liter-llm</PackageProjectUrl>
+    <PackageProjectUrl>https://kreuzberg.dev</PackageProjectUrl>
     <RepositoryUrl>https://github.com/kreuzberg-dev/liter-llm</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>liter-llm;llm;openai;anthropic;streaming;tool-calling;provider-routing;rust;ffi;dotnet</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageReleaseNotes>Version 0.1.0</PackageReleaseNotes>
+    <PackageReleaseNotes>Version 1.0.0-rc.1</PackageReleaseNotes>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 

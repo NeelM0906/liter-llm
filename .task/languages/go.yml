@@ -2,13 +2,16 @@ version: "3"
 
 vars:
   GO_VERSION: "1.22"
+  GOLANGCI_LINT_VERSION: "v2.7.2"
 
 tasks:
   install:
     desc: Install Go tools and modules
     dir: packages/go
     cmds:
-      - cmd: go mod download && go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest || true
+      - cmd: go mod download
+        platforms: [linux, darwin]
+      - cmd: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin" {{.GOLANGCI_LINT_VERSION | default "latest"}}
         platforms: [linux, darwin]
       - cmd: pwsh -Command "cd packages/go; go mod download"
         platforms: [windows]
@@ -147,7 +150,9 @@ tasks:
     dir: packages/go
     cmds:
       - echo "Updating Go dependencies and linters..."
-      - cmd: go get -u ./... && go mod tidy && go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest || true
+      - cmd: go get -u ./... && go mod tidy
+        platforms: [linux, darwin]
+      - cmd: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin" {{.GOLANGCI_LINT_VERSION | default "latest"}}
         platforms: [linux, darwin]
       - cmd: pwsh -Command "cd packages/go; go get -u ./...; go mod tidy"
         platforms: [windows]

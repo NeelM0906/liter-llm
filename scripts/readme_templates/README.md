@@ -6,7 +6,7 @@ The README generation system is an automated solution that generates consistent,
 
 ### Why This System Exists
 
-Kreuzberg supports **10+ language bindings** (Python, TypeScript, Go, Java, PHP, Ruby, C#, Elixir, WebAssembly, and more). Maintaining separate, manually-written READMEs for each language is:
+Kreuzberg supports **11 language bindings** (Python, TypeScript, Go, Java, PHP, Ruby, C#, Elixir, WebAssembly, and more). Maintaining separate, manually-written READMEs for each language is:
 
 - **Time-consuming** - Changes must be replicated across all language docs
 - **Error-prone** - Inconsistencies arise between language versions

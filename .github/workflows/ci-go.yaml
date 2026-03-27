@@ -77,6 +77,12 @@ jobs:
         run: task go:install
         shell: bash
 
+      - name: Install golangci-lint
+        shell: bash
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin" ${{ env.GOLANGCI_LINT_VERSION }}
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: Run Go Tests
         env:
           RUST_BACKTRACE: full

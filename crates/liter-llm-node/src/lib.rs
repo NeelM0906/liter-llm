@@ -19,25 +19,32 @@ use napi_derive::napi;
 fn snake_to_camel(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
-    let mut next_upper = false;
-
     // Preserve any leading underscores verbatim — they signal internal / dunder
     // names that should not be title-cased.
     while chars.peek() == Some(&'_') {
         result.push('_');
         chars.next();
-        next_upper = false; // reset so the first real char is lower-cased
     }
 
+    let mut pending_underscores: usize = 0;
     for ch in chars {
         if ch == '_' {
-            next_upper = true;
-        } else if next_upper {
-            result.extend(ch.to_uppercase());
-            next_upper = false;
+            pending_underscores += 1;
         } else {
-            result.push(ch);
+            if pending_underscores > 0 {
+                // Non-leading underscores: the first one triggers capitalisation,
+                // any extras were consecutive underscores that collapse.
+                result.extend(ch.to_uppercase());
+                pending_underscores = 0;
+            } else {
+                result.push(ch);
+            }
         }
+    }
+    // Append any trailing underscores that were consumed but had no following
+    // character to uppercase (e.g. `__init__` → the final `__` must survive).
+    for _ in 0..pending_underscores {
+        result.push('_');
     }
     result
 }

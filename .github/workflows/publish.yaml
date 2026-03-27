@@ -475,7 +475,7 @@ jobs:
           EOF
         shell: bash
       - name: Pack WASM tarball
-        run: cd crates/liter-llm-wasm && npm pack pkg/ --pack-destination dist/
+        run: cd crates/liter-llm-wasm && mkdir -p dist && npm pack pkg/ --pack-destination dist/
         shell: bash
       - uses: actions/upload-artifact@v4
         with:
@@ -608,11 +608,12 @@ jobs:
             target: aarch64-apple-darwin
             os: macos
             arch: arm64
-          - label: windows-x86_64
-            runner: windows-latest
-            target: x86_64-pc-windows-msvc
-            os: windows
-            arch: x86_64
+          # Windows disabled: ext-php-rs requires abi_vectorcall feature (nightly-only) on Windows
+          # - label: windows-x86_64
+          #   runner: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          #   os: windows
+          #   arch: x86_64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -975,7 +976,7 @@ jobs:
           merge-multiple: true
       - name: Assemble NAPI platform packages
         run: |
-          napi artifacts --dir artifacts --dist npm
+          napi artifacts --output-dir artifacts --npm-dir npm
           napi prepublish -t npm --skip-optional-publish
         working-directory: crates/liter-llm-node
         shell: bash

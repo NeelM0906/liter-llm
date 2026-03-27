@@ -117,6 +117,42 @@ describe("Streaming chat completion that produces content across multiple SSE ch
   });
 });
 
+describe("Streaming chat completion via the AWS Bedrock provider using the bedrock/ prefix — verifies SSE chunks are yielded and assembled correctly from the Converse streaming API", () => {
+  let server: MockServer;
+
+  beforeAll(async () => {
+    server = await startMockServer([{
+      path: "/chat/completions",
+      method: "POST",
+      status: 200,
+      body: "null",
+      streamChunks: [
+        "{\"choices\":[{\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000300,\"id\":\"chatcmpl-bedrock-stream001\",\"model\":\"anthropic.claude-3-sonnet-20240229-v1:0\",\"object\":\"chat.completion.chunk\"}",
+        "{\"choices\":[{\"delta\":{\"content\":\"One\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000300,\"id\":\"chatcmpl-bedrock-stream001\",\"model\":\"anthropic.claude-3-sonnet-20240229-v1:0\",\"object\":\"chat.completion.chunk\"}",
+        "{\"choices\":[{\"delta\":{\"content\":\" Two\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000300,\"id\":\"chatcmpl-bedrock-stream001\",\"model\":\"anthropic.claude-3-sonnet-20240229-v1:0\",\"object\":\"chat.completion.chunk\"}",
+        "{\"choices\":[{\"delta\":{\"content\":\" Three\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000300,\"id\":\"chatcmpl-bedrock-stream001\",\"model\":\"anthropic.claude-3-sonnet-20240229-v1:0\",\"object\":\"chat.completion.chunk\"}",
+        "{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\",\"index\":0}],\"created\":1711000300,\"id\":\"chatcmpl-bedrock-stream001\",\"model\":\"anthropic.claude-3-sonnet-20240229-v1:0\",\"object\":\"chat.completion.chunk\"}",
+      ],
+    }]);
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it("Streaming chat completion via the AWS Bedrock provider using the bedrock/ prefix — verifies SSE chunks are yielded and assembled correctly from the Converse streaming API", async () => {
+    const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url, maxRetries: 0 });
+
+    const req = JSON.parse("{\"max_tokens\":32,\"messages\":[{\"content\":\"Count to three, one word per response.\",\"role\":\"user\"}],\"model\":\"bedrock/anthropic.claude-3-sonnet-20240229-v1:0\",\"stream\":true}");
+    const chunks: unknown[] = [];
+    for await (const chunk of client.chatStream(req)) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
 describe("Streaming chat completion that produces no content chunks before the DONE signal", () => {
   let server: MockServer;
 
@@ -267,5 +303,41 @@ describe("Streaming chat completion that includes a usage summary in the final c
     }
 
     expect(chunks.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("Streaming chat completion via the Google Vertex AI provider using the vertex_ai/ prefix — verifies SSE chunks from the Gemini streaming endpoint are yielded and assembled correctly", () => {
+  let server: MockServer;
+
+  beforeAll(async () => {
+    server = await startMockServer([{
+      path: "/chat/completions",
+      method: "POST",
+      status: 200,
+      body: "null",
+      streamChunks: [
+        "{\"choices\":[{\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000400,\"id\":\"chatcmpl-vertex-stream001\",\"model\":\"gemini-2.0-flash\",\"object\":\"chat.completion.chunk\"}",
+        "{\"choices\":[{\"delta\":{\"content\":\"One\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000400,\"id\":\"chatcmpl-vertex-stream001\",\"model\":\"gemini-2.0-flash\",\"object\":\"chat.completion.chunk\"}",
+        "{\"choices\":[{\"delta\":{\"content\":\" Two\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000400,\"id\":\"chatcmpl-vertex-stream001\",\"model\":\"gemini-2.0-flash\",\"object\":\"chat.completion.chunk\"}",
+        "{\"choices\":[{\"delta\":{\"content\":\" Three\"},\"finish_reason\":null,\"index\":0}],\"created\":1711000400,\"id\":\"chatcmpl-vertex-stream001\",\"model\":\"gemini-2.0-flash\",\"object\":\"chat.completion.chunk\"}",
+        "{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\",\"index\":0}],\"created\":1711000400,\"id\":\"chatcmpl-vertex-stream001\",\"model\":\"gemini-2.0-flash\",\"object\":\"chat.completion.chunk\"}",
+      ],
+    }]);
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it("Streaming chat completion via the Google Vertex AI provider using the vertex_ai/ prefix — verifies SSE chunks from the Gemini streaming endpoint are yielded and assembled correctly", async () => {
+    const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url, maxRetries: 0 });
+
+    const req = JSON.parse("{\"max_tokens\":32,\"messages\":[{\"content\":\"Count to three, one word per response.\",\"role\":\"user\"}],\"model\":\"vertex_ai/gemini-2.0-flash\",\"stream\":true}");
+    const chunks: unknown[] = [];
+    for await (const chunk of client.chatStream(req)) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.length).toBeGreaterThanOrEqual(3);
   });
 });

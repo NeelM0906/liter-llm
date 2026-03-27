@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-description = "C FFI bindings for liter-llm universal LM API client"
+description = "C FFI bindings for liter-llm — universal LLM API client with 142+ providers. Rust-powered."
 keywords = ["ffi", "bindings", "llm", "api-client", "ai"]
 categories = ["development-tools::ffi", "api-bindings"]
 

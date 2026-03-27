@@ -262,8 +262,21 @@ fn write_test_file(dir: &Utf8Path, category: &str, fixtures: &[&Fixture]) -> Res
     writeln!(out).unwrap();
     writeln!(out, "from .mock_server import MockRoute, MockServerInfo").unwrap();
 
-    // Collect only the specific error classes actually used in this category's fixtures.
-    let mut needed_error_classes: std::collections::BTreeSet<&'static str> = fixtures
+    // Filter out fixtures that are skipped for Python or use unsupported methods.
+    let active_fixtures: Vec<&Fixture> = fixtures
+        .iter()
+        .filter(|f| !f.skip.languages.iter().any(|l| l == "python"))
+        .filter(|f| is_supported_method(f.api.method.as_str()))
+        .copied()
+        .collect();
+
+    // Skip writing the file entirely if no fixtures are active for Python.
+    if active_fixtures.is_empty() {
+        return Ok(());
+    }
+
+    // Collect only the specific error classes actually used in this category's non-skipped fixtures.
+    let mut needed_error_classes: std::collections::BTreeSet<&'static str> = active_fixtures
         .iter()
         .filter(|f| f.api.mock_response.status >= 400 || !f.assertions.expect_success)
         .map(|f| error_exception_class(f.api.mock_response.status))
@@ -285,10 +298,7 @@ fn write_test_file(dir: &Utf8Path, category: &str, fixtures: &[&Fixture]) -> Res
 
     writeln!(out).unwrap();
 
-    for fixture in fixtures {
-        if fixture.skip.languages.iter().any(|l| l == "python") {
-            continue;
-        }
+    for fixture in &active_fixtures {
         write_test_fn(&mut out, fixture);
     }
 
@@ -658,6 +668,10 @@ fn emit_chat_assertions(out: &mut String, fixture: &Fixture) {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+fn is_supported_method(method: &str) -> bool {
+    matches!(method, "chat" | "chat_stream" | "embed" | "list_models")
+}
 
 fn endpoint_for_method(method: &str) -> &'static str {
     match method {

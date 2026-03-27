@@ -85,6 +85,25 @@ describe("400 Bad Request error when a parameter value is invalid", () => {
   });
 });
 
+describe("AWS Bedrock returns 403 Forbidden (not 401) when credentials are missing, expired, or the IAM role lacks bedrock:InvokeModel permission — verifies the error is mapped to Authentication", () => {
+  let server: MockServer;
+
+  beforeAll(async () => {
+    server = await startMockServer([{ path: "/chat/completions", method: "POST", status: 403, body: "{\"message\":\"You don't have access to the model with the specified model ID.\"}", streamChunks: [] }]);
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it("AWS Bedrock returns 403 Forbidden (not 401) when credentials are missing, expired, or the IAM role lacks bedrock:InvokeModel permission — verifies the error is mapped to Authentication", async () => {
+    const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url, maxRetries: 0 });
+
+    const req = JSON.parse("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"bedrock/anthropic.claude-3-sonnet-20240229-v1:0\"}");
+    await expect(client.chat(req)).rejects.toThrow();
+  });
+});
+
 describe("400 error when a request is rejected due to content policy", () => {
   let server: MockServer;
 
@@ -233,6 +252,25 @@ describe("502 Bad Gateway error when the upstream service is unavailable", () =>
     const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url, maxRetries: 0 });
 
     const req = JSON.parse("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"gpt-4\"}");
+    await expect(client.chat(req)).rejects.toThrow();
+  });
+});
+
+describe("Google Vertex AI returns 401 Unauthorized when the OAuth2 token is missing, expired, or the service account lacks aiplatform.endpoints.predict permission — verifies the error is mapped to Authentication", () => {
+  let server: MockServer;
+
+  beforeAll(async () => {
+    server = await startMockServer([{ path: "/chat/completions", method: "POST", status: 401, body: "{\"error\":{\"code\":401,\"message\":\"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.\",\"status\":\"UNAUTHENTICATED\"}}", streamChunks: [] }]);
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it("Google Vertex AI returns 401 Unauthorized when the OAuth2 token is missing, expired, or the service account lacks aiplatform.endpoints.predict permission — verifies the error is mapped to Authentication", async () => {
+    const client = new LlmClient({ apiKey: "test-key", baseUrl: server.url, maxRetries: 0 });
+
+    const req = JSON.parse("{\"messages\":[{\"content\":\"Hello\",\"role\":\"user\"}],\"model\":\"vertex_ai/gemini-2.0-flash\"}");
     await expect(client.chat(req)).rejects.toThrow();
   });
 });

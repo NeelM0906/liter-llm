@@ -53,7 +53,7 @@ fn write_package_json(dir: &Utf8Path) -> Result<()> {
     "vitest": "^3.0.0"
   },
   "dependencies": {
-    "liter-llm-wasm": "../../packages/wasm"
+    "liter-llm-wasm": "../../crates/liter-llm-wasm"
   }
 }
 "#;

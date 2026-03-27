@@ -84,7 +84,10 @@ tasks:
 
   e2e:test:
     desc: Run TypeScript/Node E2E tests
-    dir: e2e/typescript
+    dir: "{{.PROJECT_ROOT}}"
     cmds:
-      - pnpm install
-      - npx vitest run
+      - pnpm -r --filter="./packages/typescript/**" run build
+      - cmd: |
+          cd e2e/typescript
+          pnpm install
+          npx vitest run

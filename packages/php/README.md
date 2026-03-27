@@ -60,7 +60,7 @@
   </a>
 </div>
 
-Universal LLM API client for PHP. Access 100+ LLM providers through a single interface with modern PHP 8.2+ support and a type-safe API.
+Universal LLM API client for PHP. Access 142+ LLM providers through a single interface with modern PHP 8.2+ support and a type-safe API.
 
 ## Installation
 
@@ -111,7 +111,7 @@ echo $response['choices'][0]['message']['content'] . PHP_EOL;
 
 ## Features
 
-### Supported Providers (100+)
+### Supported Providers (142+)
 
 Route to any provider using the `provider/model` prefix convention:
 
@@ -131,7 +131,7 @@ Route to any provider using the `provider/model` prefix convention:
 
 ### Key Capabilities
 
-- **Provider Routing** -- Single client for 100+ LLM providers via `provider/model` prefix
+- **Provider Routing** -- Single client for 142+ LLM providers via `provider/model` prefix
 - **Unified API** -- Consistent `chat`, `chat_stream`, `embeddings`, `list_models` interface
 
 - **Tool Calling** -- Function calling and tool use across all supporting providers
@@ -152,7 +152,7 @@ Built on a compiled Rust core for speed and safety:
 
 ## Provider Routing
 
-Route to 100+ providers using the `provider/model` prefix convention:
+Route to 142+ providers using the `provider/model` prefix convention:
 
 ```
 openai/gpt-4o

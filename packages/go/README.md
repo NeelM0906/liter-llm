@@ -60,7 +60,7 @@
   </a>
 </div>
 
-Universal LLM API client for Go. Access 100+ LLM providers through a single interface backed by the Rust core.
+Universal LLM API client for Go. Access 142+ LLM providers through a single interface backed by the Rust core.
 
 > **Version 1.0.0-rc.1**
 > Report issues at [github.com/kreuzberg-dev/liter-llm](https://github.com/kreuzberg-dev/liter-llm/issues).

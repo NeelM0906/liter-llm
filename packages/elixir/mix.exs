@@ -13,7 +13,7 @@ defmodule LiterLlm.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       description:
-        "High-performance LLM client with streaming, tool calling, and provider routing",
+        "Universal LLM API client — 142+ providers, streaming, tool calling, and provider routing. Rust-powered.",
       package: package(),
       docs: docs(),
       source_url: @source_url
@@ -40,7 +40,8 @@ defmodule LiterLlm.MixProject do
   defp package do
     [
       licenses: ["MIT"],
-      links: %{GitHub: @source_url},
+      maintainers: ["Na'aman Hirschfeld"],
+      links: %{GitHub: @source_url, Homepage: "https://kreuzberg.dev"},
       files: ~w(
         lib
         native/liter_llm_rustler/src

@@ -6,8 +6,8 @@ requires = [ "maturin>=1,<2" ]
 name = "liter-llm"
 version = "1.0.0rc1"
 description = """\
-  High-performance LLM client library for Python. Unified interface for streaming, tool calling, and provider routing \
-  across OpenAI, Anthropic, and 50+ LLM providers. Powered by Rust core.\
+  Universal LLM API client for Python. Unified interface for streaming, tool calling, and provider routing across 142+ \
+  LLM providers. Rust-powered.\
   """
 readme = "README.md"
 keywords = [
@@ -44,7 +44,7 @@ classifiers = [
 ]
 dependencies = [ "typing-extensions>=4.15; python_version<'3.13'" ]
 urls.Changelog = "https://github.com/kreuzberg-dev/liter-llm/blob/main/CHANGELOG.md"
-urls.Homepage = "https://github.com/kreuzberg-dev/liter-llm"
+urls.Homepage = "https://kreuzberg.dev"
 urls.Issues = "https://github.com/kreuzberg-dev/liter-llm/issues"
 urls.Repository = "https://github.com/kreuzberg-dev/liter-llm"
 urls.Source = "https://github.com/kreuzberg-dev/liter-llm"

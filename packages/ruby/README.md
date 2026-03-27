@@ -60,7 +60,7 @@
   </a>
 </div>
 
-Universal LLM API client for Ruby. Access 100+ LLM providers through a single interface with idiomatic Ruby API and native performance.
+Universal LLM API client for Ruby. Access 142+ LLM providers through a single interface with idiomatic Ruby API and native performance.
 
 ## Installation
 
@@ -138,7 +138,7 @@ puts response.dig("choices", 0, "message", "content")
 
 ## Features
 
-### Supported Providers (100+)
+### Supported Providers (142+)
 
 Route to any provider using the `provider/model` prefix convention:
 
@@ -158,7 +158,7 @@ Route to any provider using the `provider/model` prefix convention:
 
 ### Key Capabilities
 
-- **Provider Routing** -- Single client for 100+ LLM providers via `provider/model` prefix
+- **Provider Routing** -- Single client for 142+ LLM providers via `provider/model` prefix
 - **Unified API** -- Consistent `chat`, `chat_stream`, `embeddings`, `list_models` interface
 
 - **Streaming** -- Real-time token streaming via `chat_stream`
@@ -181,7 +181,7 @@ Built on a compiled Rust core for speed and safety:
 
 ## Provider Routing
 
-Route to 100+ providers using the `provider/model` prefix convention:
+Route to 142+ providers using the `provider/model` prefix convention:
 
 ```
 openai/gpt-4o

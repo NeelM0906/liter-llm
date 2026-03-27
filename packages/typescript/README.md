@@ -41,7 +41,7 @@
 
 High-performance LLM client library for TypeScript and Node.js. Unified interface for
 streaming completions, tool calling, and provider routing across OpenAI, Anthropic, and
-100+ LLM providers. Powered by Rust core via NAPI-RS bindings with full TypeScript type
+142+ LLM providers. Powered by Rust core via NAPI-RS bindings with full TypeScript type
 definitions and native async/Promise support.
 
 ## Installation
@@ -75,7 +75,7 @@ console.log(response.content);
 
 | Feature | Supported |
 |---------|-----------|
-| **Provider Routing** | 100+ providers via `"provider/model"` prefix |
+| **Provider Routing** | 142+ providers via `"provider/model"` prefix |
 | **Chat Completions** | OpenAI-compatible unified API |
 | **Streaming** | Server-sent events, token-by-token |
 | **Tool Calling** | Function definitions, structured outputs |
@@ -139,7 +139,7 @@ for (const call of response.toolCalls ?? []) {
 
 ## Provider Routing
 
-Route requests to any of 100+ providers using a `"provider/model"` prefix:
+Route requests to any of 142+ providers using a `"provider/model"` prefix:
 
 ```
 openai/gpt-4o

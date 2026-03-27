@@ -2,7 +2,7 @@
 //
 // It speaks the OpenAI-compatible HTTP API directly — no cgo, no CGO, no
 // shared libraries required.  The same wire format is used for all
-// 100+ providers supported by liter-llm; the model-name prefix
+// 142+ providers supported by liter-llm; the model-name prefix
 // (e.g. "groq/llama3-70b") selects the provider and endpoint.
 package literllm
 

@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-description = "WebAssembly bindings for liter-llm universal LM API client"
+description = "WebAssembly bindings for liter-llm — universal LLM API client with 142+ providers. Rust-powered."
 keywords = ["wasm", "webassembly", "llm", "api-client", "bindings"]
 categories = ["api-bindings", "wasm"]
 

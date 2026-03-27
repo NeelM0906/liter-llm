@@ -4,7 +4,7 @@ summary: Universal LM API client architecture, crate layout, and provider regist
 
 # Project Overview
 
-Liter-LM is a universal LLM API client written in Rust with native bindings for 10+ languages.
+Liter-LM is a universal LLM API client written in Rust with native bindings for 11 languages.
 
 ## Crate Layout
 
@@ -25,7 +25,7 @@ Liter-LM is a universal LLM API client written in Rust with native bindings for 
 
 ## Provider Registry
 
-`schemas/providers.json` contains 100+ LLM provider configurations compiled into the binary. Each entry defines: base URL, auth header format, model prefixes, and parameter mappings.
+`schemas/providers.json` contains 142+ LLM provider configurations compiled into the binary. Each entry defines: base URL, auth header format, model prefixes, and parameter mappings.
 
 ## E2E Test Generation
 

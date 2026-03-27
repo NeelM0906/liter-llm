@@ -1,5 +1,5 @@
 $schema: https://raw.githubusercontent.com/Goldziher/ai-rulez/main/schema/ai-rules-v3.schema.json
-description: Universal LM API client with polyglot bindings — unified access to 100+ LLM providers with native bindings for Rust, Python, TypeScript, Go, Java, Ruby, PHP, C#, Elixir, and WebAssembly.
+description: Universal LM API client with polyglot bindings — unified access to 142+ LLM providers with native bindings for Rust, Python, TypeScript, Go, Java, Ruby, PHP, C#, Elixir, and WebAssembly.
 gitignore: true
 name: Liter-LM
 
