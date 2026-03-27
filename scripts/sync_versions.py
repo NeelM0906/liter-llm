@@ -117,6 +117,11 @@ def update_pyproject_toml(file_path: Path, version: str) -> tuple[bool, str, str
     return False, old_version, version
 
 
+def update_python_pyproject_toml(file_path: Path, version: str) -> tuple[bool, str, str]:
+    """Update pyproject.toml using a PEP 440-normalised version."""
+    return update_pyproject_toml(file_path, _normalize_python_version(version))
+
+
 def update_package_json(file_path: Path, version: str) -> tuple[bool, str, str]:
     """Update the version field (and any liter-llm/* dep versions) in package.json."""
     data = json.loads(file_path.read_text(encoding="utf-8"))
@@ -316,6 +321,26 @@ def _normalize_rubygems_version(version: str) -> str:
     return f"{base}.pre.{pre.replace('-', '.')}"
 
 
+def _normalize_python_version(version: str) -> str:
+    """Convert semver pre-release to PEP 440 form for PyPI.
+
+    Examples:
+      1.0.0-rc.1   → 1.0.0rc1
+      1.0.0-alpha.2 → 1.0.0a2
+      1.0.0-beta.3  → 1.0.0b3
+      1.0.0         → 1.0.0
+    """
+    if "-" not in version:
+        return version
+    base, pre = version.split("-", 1)
+    # pre is like "rc.1", "alpha.2", "beta.3"
+    parts = pre.split(".")
+    label = parts[0].lower()
+    number = parts[1] if len(parts) > 1 else "0"
+    pep440_label = {"alpha": "a", "beta": "b", "rc": "rc"}.get(label, label)
+    return f"{base}{pep440_label}{number}"
+
+
 # ---------------------------------------------------------------------------
 # Result accumulation
 # ---------------------------------------------------------------------------
@@ -381,10 +406,10 @@ def build_targets(
     """
     return [
         # Root manifests
-        (repo_root / "pyproject.toml", update_pyproject_toml),
+        (repo_root / "pyproject.toml", update_python_pyproject_toml),
         (repo_root / "composer.json", update_composer_json),
         # Python binding
-        (repo_root / "packages" / "python" / "pyproject.toml", update_pyproject_toml),
+        (repo_root / "packages" / "python" / "pyproject.toml", update_python_pyproject_toml),
         # TypeScript binding — root package.json and workspace package
         (repo_root / "package.json", update_package_json),
         (repo_root / "packages" / "typescript" / "package.json", update_package_json),
