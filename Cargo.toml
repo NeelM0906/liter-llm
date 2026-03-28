@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/liter-llm",
+    "crates/liter-llm-bindings-core",
     "crates/liter-llm-ffi",
     "crates/liter-llm-node",
     "crates/liter-llm-php",

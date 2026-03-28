@@ -9,65 +9,8 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::ThreadsafeFunction;
 use napi_derive::napi;
 
-// ─── camelCase conversion ─────────────────────────────────────────────────────
-
-/// Convert a snake_case identifier to camelCase.
-///
-/// Edge cases handled correctly:
-/// - Leading underscores are preserved: `__foo` → `__foo`
-/// - Consecutive underscores collapse: `foo__bar` → `fooBar` (second `_`
-///   triggers capitalisation; the extra underscore is consumed, not doubled)
-/// - A leading single underscore is preserved: `_foo` → `_foo`
-fn snake_to_camel(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    // Preserve any leading underscores verbatim — they signal internal / dunder
-    // names that should not be title-cased.
-    while chars.peek() == Some(&'_') {
-        result.push('_');
-        chars.next();
-    }
-
-    let mut pending_underscores: usize = 0;
-    for ch in chars {
-        if ch == '_' {
-            pending_underscores += 1;
-        } else if pending_underscores > 0 {
-            // Non-leading underscores: the first one triggers capitalisation,
-            // any extras were consecutive underscores that collapse.
-            result.extend(ch.to_uppercase());
-            pending_underscores = 0;
-        } else {
-            result.push(ch);
-        }
-    }
-    // Append any trailing underscores that were consumed but had no following
-    // character to uppercase (e.g. `__init__` → the final `__` must survive).
-    for _ in 0..pending_underscores {
-        result.push('_');
-    }
-    result
-}
-
-/// Recursively convert all object keys from snake_case to camelCase.
-///
-/// Note: `tool_calls[].function.arguments` is a JSON-encoded string
-/// (`Value::String`), not a nested object, so the recursive descent stops
-/// there naturally — the contents of `arguments` are never key-converted.
-/// This is correct behaviour: the arguments payload must remain unchanged.
-fn to_camel_case_keys(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(map) => {
-            let converted = map
-                .into_iter()
-                .map(|(k, v)| (snake_to_camel(&k), to_camel_case_keys(v)))
-                .collect();
-            serde_json::Value::Object(converted)
-        }
-        serde_json::Value::Array(arr) => serde_json::Value::Array(arr.into_iter().map(to_camel_case_keys).collect()),
-        other => other,
-    }
-}
+use liter_llm_bindings_core::case::{to_camel_case_keys, to_snake_case_keys};
+use liter_llm_bindings_core::error::error_kind_label;
 
 /// Serialize a Rust value to a camelCase `serde_json::Value` for JS consumption.
 fn to_js_value<T: serde::Serialize>(value: T) -> napi::Result<serde_json::Value> {
@@ -85,26 +28,11 @@ fn to_napi_err(e: liter_llm::LiterLlmError) -> napi::Error {
     napi::Error::new(Status::GenericFailure, msg)
 }
 
-/// Return a short, stable label for each error variant.
-fn error_kind_label(e: &liter_llm::LiterLlmError) -> &'static str {
-    match e {
-        liter_llm::LiterLlmError::Authentication { .. } => "Authentication",
-        liter_llm::LiterLlmError::RateLimited { .. } => "RateLimited",
-        liter_llm::LiterLlmError::BadRequest { .. } => "BadRequest",
-        liter_llm::LiterLlmError::ContextWindowExceeded { .. } => "ContextWindowExceeded",
-        liter_llm::LiterLlmError::ContentPolicy { .. } => "ContentPolicy",
-        liter_llm::LiterLlmError::NotFound { .. } => "NotFound",
-        liter_llm::LiterLlmError::ServerError { .. } => "ServerError",
-        liter_llm::LiterLlmError::ServiceUnavailable { .. } => "ServiceUnavailable",
-        liter_llm::LiterLlmError::Timeout => "Timeout",
-        liter_llm::LiterLlmError::Network(_) => "Network",
-        liter_llm::LiterLlmError::Streaming { .. } => "Streaming",
-        liter_llm::LiterLlmError::EndpointNotSupported { .. } => "EndpointNotSupported",
-        liter_llm::LiterLlmError::InvalidHeader { .. } => "InvalidHeader",
-        liter_llm::LiterLlmError::Serialization(_) => "Serialization",
-        // IMPORTANT: Update this match when adding new LiterLlmError variants.
-        _ => "Unknown",
-    }
+/// Deserialize a `serde_json::Value` from JS into a Rust type, normalizing
+/// camelCase keys to snake_case first so JS callers can pass either convention.
+fn from_js_value<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> napi::Result<T> {
+    let normalized = to_snake_case_keys(value);
+    serde_json::from_value(normalized).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
 }
 
 // ─── NAPI Hook Bridge ────────────────────────────────────────────────────────
@@ -428,8 +356,7 @@ impl LlmClient {
     /// ```
     #[napi]
     pub async fn chat(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
-        let req: liter_llm::ChatCompletionRequest =
-            serde_json::from_value(request.clone()).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+        let req: liter_llm::ChatCompletionRequest = from_js_value(request.clone())?;
 
         let hooks = self.snapshot_hooks();
         let req_json = serde_json::to_string(&request).unwrap_or_default();
@@ -467,8 +394,7 @@ impl LlmClient {
     /// ```
     #[napi(js_name = "chatStream")]
     pub async fn chat_stream(&self, request: serde_json::Value) -> napi::Result<Vec<serde_json::Value>> {
-        let req: liter_llm::ChatCompletionRequest =
-            serde_json::from_value(request.clone()).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+        let req: liter_llm::ChatCompletionRequest = from_js_value(request.clone())?;
 
         let hooks = self.snapshot_hooks();
         let req_json = serde_json::to_string(&request).unwrap_or_default();
@@ -512,8 +438,7 @@ impl LlmClient {
     /// ```
     #[napi]
     pub async fn embed(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
-        let req: liter_llm::EmbeddingRequest =
-            serde_json::from_value(request.clone()).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+        let req: liter_llm::EmbeddingRequest = from_js_value(request.clone())?;
 
         let hooks = self.snapshot_hooks();
         let req_json = serde_json::to_string(&request).unwrap_or_default();
@@ -580,8 +505,7 @@ impl LlmClient {
     /// ```
     #[napi(js_name = "imageGenerate")]
     pub async fn image_generate(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
-        let req: liter_llm::CreateImageRequest =
-            serde_json::from_value(request.clone()).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+        let req: liter_llm::CreateImageRequest = from_js_value(request.clone())?;
 
         let hooks = self.snapshot_hooks();
         let req_json = serde_json::to_string(&request).unwrap_or_default();
@@ -614,8 +538,7 @@ impl LlmClient {
     /// ```
     #[napi]
     pub async fn speech(&self, request: serde_json::Value) -> napi::Result<Buffer> {
-        let req: liter_llm::CreateSpeechRequest =
-            serde_json::from_value(request.clone()).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+        let req: liter_llm::CreateSpeechRequest = from_js_value(request.clone())?;
 
         let hooks = self.snapshot_hooks();
         let req_json = serde_json::to_string(&request).unwrap_or_default();
@@ -648,8 +571,7 @@ impl LlmClient {
     /// ```
     #[napi]
     pub async fn transcribe(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
-        let req: liter_llm::CreateTranscriptionRequest =
-            serde_json::from_value(request.clone()).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+        let req: liter_llm::CreateTranscriptionRequest = from_js_value(request.clone())?;
 
         let hooks = self.snapshot_hooks();
         let req_json = serde_json::to_string(&request).unwrap_or_default();
@@ -682,8 +604,7 @@ impl LlmClient {
     /// ```
     #[napi]
     pub async fn moderate(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
-        let req: liter_llm::ModerationRequest =
-            serde_json::from_value(request.clone()).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+        let req: liter_llm::ModerationRequest = from_js_value(request.clone())?;
 
         let hooks = self.snapshot_hooks();
         let req_json = serde_json::to_string(&request).unwrap_or_default();
@@ -716,8 +637,7 @@ impl LlmClient {
     /// ```
     #[napi]
     pub async fn rerank(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
-        let req: liter_llm::RerankRequest =
-            serde_json::from_value(request.clone()).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+        let req: liter_llm::RerankRequest = from_js_value(request.clone())?;
 
         let hooks = self.snapshot_hooks();
         let req_json = serde_json::to_string(&request).unwrap_or_default();
@@ -753,8 +673,7 @@ impl LlmClient {
     /// ```
     #[napi(js_name = "createFile")]
     pub async fn create_file(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
-        let req: liter_llm::CreateFileRequest =
-            serde_json::from_value(request.clone()).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+        let req: liter_llm::CreateFileRequest = from_js_value(request.clone())?;
 
         let hooks = self.snapshot_hooks();
         let req_json = serde_json::to_string(&request).unwrap_or_default();
@@ -854,9 +773,7 @@ impl LlmClient {
         let hooks = self.snapshot_hooks();
         invoke_hooks_on_request(&hooks, &req_marker.to_string()).await?;
 
-        let parsed: Option<liter_llm::FileListQuery> = query
-            .map(|v| serde_json::from_value(v).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string())))
-            .transpose()?;
+        let parsed: Option<liter_llm::FileListQuery> = query.map(from_js_value).transpose()?;
 
         let client = Arc::clone(&self.inner);
         match client.list_files(parsed).await {
@@ -918,8 +835,7 @@ impl LlmClient {
     /// ```
     #[napi(js_name = "createBatch")]
     pub async fn create_batch(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
-        let req: liter_llm::CreateBatchRequest =
-            serde_json::from_value(request.clone()).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+        let req: liter_llm::CreateBatchRequest = from_js_value(request.clone())?;
 
         let hooks = self.snapshot_hooks();
         let req_json = serde_json::to_string(&request).unwrap_or_default();
@@ -988,9 +904,7 @@ impl LlmClient {
         let hooks = self.snapshot_hooks();
         invoke_hooks_on_request(&hooks, &req_marker.to_string()).await?;
 
-        let parsed: Option<liter_llm::BatchListQuery> = query
-            .map(|v| serde_json::from_value(v).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string())))
-            .transpose()?;
+        let parsed: Option<liter_llm::BatchListQuery> = query.map(from_js_value).transpose()?;
 
         let client = Arc::clone(&self.inner);
         match client.list_batches(parsed).await {
@@ -1052,8 +966,7 @@ impl LlmClient {
     /// ```
     #[napi(js_name = "createResponse")]
     pub async fn create_response(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
-        let req: liter_llm::CreateResponseRequest =
-            serde_json::from_value(request.clone()).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))?;
+        let req: liter_llm::CreateResponseRequest = from_js_value(request.clone())?;
 
         let hooks = self.snapshot_hooks();
         let req_json = serde_json::to_string(&request).unwrap_or_default();
@@ -1234,44 +1147,4 @@ async fn collect_chunk_stream(
         items: Vec::new(),
     }
     .await
-}
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::snake_to_camel;
-
-    #[test]
-    fn snake_to_camel_basic() {
-        assert_eq!(snake_to_camel("foo_bar"), "fooBar");
-        assert_eq!(snake_to_camel("foo_bar_baz"), "fooBarBaz");
-    }
-
-    #[test]
-    fn snake_to_camel_no_underscores() {
-        assert_eq!(snake_to_camel("foobar"), "foobar");
-    }
-
-    #[test]
-    fn snake_to_camel_leading_single_underscore_preserved() {
-        assert_eq!(snake_to_camel("_foo"), "_foo");
-    }
-
-    #[test]
-    fn snake_to_camel_leading_double_underscore_preserved() {
-        assert_eq!(snake_to_camel("__foo"), "__foo");
-        assert_eq!(snake_to_camel("__init__"), "__init__");
-    }
-
-    #[test]
-    fn snake_to_camel_consecutive_underscores_in_middle() {
-        // Extra underscores collapse: `foo__bar` → `fooBar`
-        assert_eq!(snake_to_camel("foo__bar"), "fooBar");
-    }
-
-    #[test]
-    fn snake_to_camel_empty() {
-        assert_eq!(snake_to_camel(""), "");
-    }
 }

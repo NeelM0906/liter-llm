@@ -22,7 +22,7 @@ Built in Rust for performance, safety, and reliability.
 
 - :material-rocket-launch:{ .lg .middle } **Getting Started**
 
-    ---
+---
 
     Install liter-llm in your language of choice and make your first API call in minutes.
 
@@ -30,7 +30,7 @@ Built in Rust for performance, safety, and reliability.
 
 - :material-server-network:{ .lg .middle } **142 Providers**
 
-    ---
+---
 
     Access OpenAI, Anthropic, Google, AWS Bedrock, Groq, Mistral, and 130+ more through one interface.
 
@@ -38,7 +38,7 @@ Built in Rust for performance, safety, and reliability.
 
 - :material-language-rust:{ .lg .middle } **Architecture**
 
-    ---
+---
 
     Understand the Rust core, Tower middleware stack, and how language bindings work.
 
@@ -46,7 +46,7 @@ Built in Rust for performance, safety, and reliability.
 
 - :material-api:{ .lg .middle } **API Reference**
 
-    ---
+---
 
     Complete API documentation for all 11 supported languages.
 

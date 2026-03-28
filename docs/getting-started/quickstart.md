@@ -98,7 +98,7 @@ Stream tokens as they arrive instead of waiting for the full response:
 
 liter-llm uses a `provider/model` prefix convention to route requests to the correct provider. The provider prefix determines which API endpoint, auth header, and parameter mappings to use.
 
-```
+```text
 openai/gpt-4o          -> OpenAI
 anthropic/claude-sonnet-4-20250514  -> Anthropic
 groq/llama3-70b        -> Groq

@@ -142,27 +142,27 @@ CGO_LDFLAGS="-L$HOME/liter-llm/lib -lliter_llm_ffi" go build
 package main
 
 import (
- "context"
- "fmt"
- "log"
+	"context"
+	"fmt"
+	"log"
 
- literllm "github.com/kreuzberg-dev/liter-llm/packages/go"
+	literllm "github.com/kreuzberg-dev/liter-llm/packages/go"
 )
 
 func main() {
- client := literllm.NewClient()
+	client := literllm.NewClient()
 
- resp, err := client.Chat(context.Background(), literllm.ChatRequest{
-  Model: "openai/gpt-4o",
-  Messages: []literllm.Message{
-   {Role: "user", Content: "Hello!"},
-  },
- })
- if err != nil {
-  log.Fatalf("chat failed: %v", err)
- }
+	resp, err := client.Chat(context.Background(), literllm.ChatRequest{
+		Model: "openai/gpt-4o",
+		Messages: []literllm.Message{
+			{Role: "user", Content: "Hello!"},
+		},
+	})
+	if err != nil {
+		log.Fatalf("chat failed: %v", err)
+	}
 
- fmt.Println(resp.Content)
+	fmt.Println(resp.Content)
 }
 ```
 
@@ -179,16 +179,16 @@ CGO_LDFLAGS="-L$HOME/liter-llm/lib -lliter_llm_ffi" go build
 
 ```go
 stream, err := client.ChatStream(ctx, literllm.ChatRequest{
- Model:    "openai/gpt-4o",
- Messages: []literllm.Message{{Role: "user", Content: "Tell me a story"}},
+	Model:    "openai/gpt-4o",
+	Messages: []literllm.Message{{Role: "user", Content: "Tell me a story"}},
 })
 if err != nil {
- log.Fatal(err)
+	log.Fatal(err)
 }
 defer stream.Close()
 
 for chunk := range stream.Chunks() {
- fmt.Print(chunk.Delta)
+	fmt.Print(chunk.Delta)
 }
 ```
 
@@ -212,11 +212,11 @@ ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 defer cancel()
 
 resp, err := client.Chat(ctx, literllm.ChatRequest{
- Model:    "openai/gpt-4o",
- Messages: []literllm.Message{{Role: "user", Content: "Hello!"}},
+	Model:    "openai/gpt-4o",
+	Messages: []literllm.Message{{Role: "user", Content: "Hello!"}},
 })
 if err != nil {
- log.Fatalf("chat failed: %v", err)
+	log.Fatalf("chat failed: %v", err)
 }
 fmt.Println(resp.Content)
 ```

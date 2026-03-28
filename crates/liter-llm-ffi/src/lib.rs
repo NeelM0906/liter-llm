@@ -18,6 +18,8 @@ use std::ffi::{CStr, CString, c_char};
 
 use liter_llm::client::managed::ManagedClient;
 use liter_llm::client::{BatchClient, ClientConfig, FileClient, LlmClient, ResponseClient};
+use liter_llm_bindings_core::error::format_error;
+use liter_llm_bindings_core::runtime::current_thread_runtime;
 
 // ---------------------------------------------------------------------------
 // Thread-local last-error storage
@@ -133,21 +135,13 @@ const _: () = {
     let _ = _assert_send_sync::<ManagedClient>;
 };
 
+/// Get the shared current-thread Tokio runtime from `liter-llm-bindings-core`.
+///
+/// Uses `current_thread` so that `block_on` drives all work on the calling
+/// thread.  This guarantees that `LAST_ERROR` TLS writes happen on the
+/// same thread that called the public API function.
 fn runtime() -> Result<&'static tokio::runtime::Runtime, String> {
-    static RT: std::sync::OnceLock<Result<tokio::runtime::Runtime, String>> = std::sync::OnceLock::new();
-    RT.get_or_init(|| {
-        // Use current_thread so that block_on drives all work on the calling
-        // thread.  This guarantees that LAST_ERROR TLS writes happen on the
-        // same thread that called the public API function, which is essential
-        // for correctness: if a multi-thread runtime dispatched work to a
-        // worker thread the caller's LAST_ERROR cell would never be updated.
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("failed to build tokio runtime: {e}"))
-    })
-    .as_ref()
-    .map_err(|e| e.clone())
+    Ok(current_thread_runtime())
 }
 
 // ---------------------------------------------------------------------------
@@ -243,7 +237,7 @@ pub unsafe extern "C" fn literllm_client_new(
             Box::into_raw(handle)
         }
         Err(e) => {
-            set_last_error(format!("literllm_client_new: {e}"));
+            set_last_error(format!("literllm_client_new: {}", format_error(&e)));
             std::ptr::null_mut()
         }
     }
@@ -364,7 +358,7 @@ pub unsafe extern "C" fn literllm_chat(client: *const LiterLlmClient, request_js
             }
         },
         Err(e) => {
-            let msg = format!("literllm_chat: {e}");
+            let msg = format!("literllm_chat: {}", format_error(&e));
             invoke_on_error(&client_handle.hooks, &req_c, &msg);
             set_last_error(msg);
             std::ptr::null_mut()
@@ -616,7 +610,7 @@ pub unsafe extern "C" fn literllm_embed(client: *const LiterLlmClient, request_j
             }
         },
         Err(e) => {
-            let msg = format!("literllm_embed: {e}");
+            let msg = format!("literllm_embed: {}", format_error(&e));
             invoke_on_error(&client_handle.hooks, &req_c, &msg);
             set_last_error(msg);
             std::ptr::null_mut()
@@ -694,7 +688,7 @@ pub unsafe extern "C" fn literllm_list_models(client: *const LiterLlmClient) -> 
             }
         },
         Err(e) => {
-            let msg = format!("literllm_list_models: {e}");
+            let msg = format!("literllm_list_models: {}", format_error(&e));
             invoke_on_error(&client_handle.hooks, &req_c, &msg);
             set_last_error(msg);
             std::ptr::null_mut()
@@ -804,7 +798,7 @@ where
             }
         },
         Err(e) => {
-            let msg = format!("{name}: {e}");
+            let msg = format!("{name}: {}", format_error(&e));
             invoke_on_error(&client_handle.hooks, &req_c, &msg);
             set_last_error(msg);
             std::ptr::null_mut()
@@ -892,7 +886,7 @@ where
             }
         },
         Err(e) => {
-            let msg = format!("{name}: {e}");
+            let msg = format!("{name}: {}", format_error(&e));
             invoke_on_error(&client_handle.hooks, &req_c, &msg);
             set_last_error(msg);
             std::ptr::null_mut()
@@ -974,7 +968,7 @@ fn id_request_bytes(
             }
         }
         Err(e) => {
-            let msg = format!("{name}: {e}");
+            let msg = format!("{name}: {}", format_error(&e));
             invoke_on_error(&client_handle.hooks, &req_c, &msg);
             set_last_error(msg);
             std::ptr::null_mut()
@@ -1105,7 +1099,7 @@ pub unsafe extern "C" fn literllm_speech(client: *const LiterLlmClient, request_
             }
         }
         Err(e) => {
-            let msg = format!("literllm_speech: {e}");
+            let msg = format!("literllm_speech: {}", format_error(&e));
             invoke_on_error(&client_handle.hooks, &req_c, &msg);
             set_last_error(msg);
             std::ptr::null_mut()

@@ -192,7 +192,7 @@ Built on a compiled Rust core for speed and safety:
 
 Route to 142+ providers using the `provider/model` prefix convention:
 
-```
+```text
 openai/gpt-4o
 anthropic/claude-3-5-sonnet-20241022
 groq/llama-3.1-70b-versatile

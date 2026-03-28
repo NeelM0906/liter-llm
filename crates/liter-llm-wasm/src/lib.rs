@@ -27,7 +27,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use js_sys::Promise;
-use serde::Deserialize;
+use liter_llm_bindings_core::case::{to_camel_case_keys, to_snake_case_keys};
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
@@ -511,7 +512,72 @@ fn js_err(msg: impl std::fmt::Display) -> JsValue {
 }
 
 fn js_to_json(value: JsValue) -> Result<serde_json::Value, JsValue> {
-    serde_wasm_bindgen::from_value(value).map_err(js_err)
+    let raw: serde_json::Value = serde_wasm_bindgen::from_value(value).map_err(js_err)?;
+    Ok(to_snake_case_keys(raw))
+}
+
+/// Convert a `serde_json::Value` with snake_case keys to a `JsValue` with camelCase keys.
+///
+/// Uses `json_compatible()` serializer so that `serde_json::Map` objects are
+/// produced as plain JS objects (`{}`), not JS `Map` instances.  Without this,
+/// `serde_wasm_bindgen` 0.6 defaults to JS `Map` which appears as `{}` when
+/// accessed via property syntax or `JSON.stringify`.
+fn json_to_js_camel(value: serde_json::Value) -> Result<JsValue, JsValue> {
+    let camel = to_camel_case_keys(value);
+    camel
+        .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .map_err(js_err)
+}
+
+// ─── Custom provider config parsing ─────────────────────────────────────────
+
+/// Parse an auth header format string using the same conventions as
+/// `liter_llm_bindings_core::config::parse_auth_header`.
+///
+/// - `"none"` -> `AuthHeaderFormat::None`
+/// - `"api-key:X-Custom"` -> `AuthHeaderFormat::ApiKey("X-Custom")`
+/// - `"bearer"` or anything else -> `AuthHeaderFormat::Bearer`
+fn parse_auth_header_format(s: &str) -> liter_llm::AuthHeaderFormat {
+    let lower = s.to_lowercase();
+    if lower == "none" {
+        liter_llm::AuthHeaderFormat::None
+    } else if let Some(header) = lower.strip_prefix("api-key:") {
+        liter_llm::AuthHeaderFormat::ApiKey(header.to_string())
+    } else {
+        liter_llm::AuthHeaderFormat::Bearer
+    }
+}
+
+/// Parse a `CustomProviderConfig` from a JSON value, using the same
+/// conventions as the other bindings.
+fn parse_provider_config_from_json(val: &serde_json::Value) -> Result<liter_llm::CustomProviderConfig, JsValue> {
+    let name = val
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| js_err("missing 'name' field"))?
+        .to_string();
+    let base_url = val
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| js_err("missing 'base_url' field"))?
+        .to_string();
+    let auth_header = val
+        .get("auth_header")
+        .and_then(|v| v.as_str())
+        .map(parse_auth_header_format)
+        .unwrap_or(liter_llm::AuthHeaderFormat::Bearer);
+    let model_prefixes = val
+        .get("model_prefixes")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    Ok(liter_llm::CustomProviderConfig {
+        name,
+        base_url,
+        auth_header,
+        model_prefixes,
+    })
 }
 
 // ─── Client options ───────────────────────────────────────────────────────────
@@ -670,12 +736,12 @@ fn record_budget_cost(state: &mut BudgetState, model: &str, response: &JsValue) 
         if usage_val.is_undefined() || usage_val.is_null() {
             return;
         }
-        let prompt = js_sys::Reflect::get(&usage_val, &"prompt_tokens".into())
+        let prompt = js_sys::Reflect::get(&usage_val, &"promptTokens".into())
             .ok()
             .and_then(|v| v.as_f64())
             .map(|f| f as u64)
             .unwrap_or(0);
-        let completion = js_sys::Reflect::get(&usage_val, &"completion_tokens".into())
+        let completion = js_sys::Reflect::get(&usage_val, &"completionTokens".into())
             .ok()
             .and_then(|v| v.as_f64())
             .map(|f| f as u64)
@@ -897,7 +963,7 @@ impl LlmClient {
         let cache_rc = Rc::clone(&self.cache);
 
         wasm_bindgen_futures::future_to_promise(async move {
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await?;
             let req_json = js_to_json(request.clone())?;
             let url = format!("{base_url}/chat/completions");
 
@@ -927,8 +993,10 @@ impl LlmClient {
             if let Some(cached_json) = cached_hit {
                 // Parse the cached JSON string back into a JsValue.
                 let parsed: serde_json::Value = serde_json::from_str(&cached_json).map_err(js_err)?;
-                let js_val = serde_wasm_bindgen::to_value(&parsed).map_err(js_err)?;
-                invoke_hooks(&hooks, "onResponse", &[request, js_val.clone()]).await;
+                let js_val = parsed
+                    .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                    .map_err(js_err)?;
+                let _ = invoke_hooks(&hooks, "onResponse", &[request, js_val.clone()]).await;
                 return Ok(js_val);
             }
 
@@ -953,11 +1021,11 @@ impl LlmClient {
                         }
                     }
 
-                    invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -987,7 +1055,7 @@ impl LlmClient {
         let budget_state_rc = Rc::clone(&self.budget_state);
 
         wasm_bindgen_futures::future_to_promise(async move {
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await?;
             let mut req_json = js_to_json(request.clone())?;
 
             // Extract model name for budget tracking.
@@ -1042,7 +1110,7 @@ impl LlmClient {
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
                     .unwrap_or(raw_text);
-                invoke_hooks(&hooks, "onError", &[request, JsValue::from_str(&message)]).await;
+                let _ = invoke_hooks(&hooks, "onError", &[request, JsValue::from_str(&message)]).await;
                 return Err(js_err(format!("HTTP {status}: {message}")));
             }
 
@@ -1075,16 +1143,16 @@ impl LlmClient {
         let hooks = self.hooks.clone();
 
         wasm_bindgen_futures::future_to_promise(async move {
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await?;
             let req_json = js_to_json(request.clone())?;
             let url = format!("{base_url}/embeddings");
             match fetch_json_post_with_auth(&url, &auth_header, req_json, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1103,15 +1171,15 @@ impl LlmClient {
 
         wasm_bindgen_futures::future_to_promise(async move {
             let req_marker = JsValue::from_str("listModels");
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await?;
             let url = format!("{base_url}/models");
             match fetch_json_get_with_auth(&url, &auth_header, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1132,16 +1200,16 @@ impl LlmClient {
         let hooks = self.hooks.clone();
 
         wasm_bindgen_futures::future_to_promise(async move {
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await?;
             let req_json = js_to_json(request.clone())?;
             let url = format!("{base_url}/images/generations");
             match fetch_json_post_with_auth(&url, &auth_header, req_json, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1159,16 +1227,16 @@ impl LlmClient {
         let hooks = self.hooks.clone();
 
         wasm_bindgen_futures::future_to_promise(async move {
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await?;
             let req_json = js_to_json(request.clone())?;
             let url = format!("{base_url}/audio/speech");
             match fetch_bytes_post_with_auth(&url, &auth_header, req_json, max_retries).await {
                 Ok(resp_bytes) => {
-                    invoke_hooks(&hooks, "onResponse", &[request, resp_bytes.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[request, resp_bytes.clone()]).await;
                     Ok(resp_bytes)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1186,16 +1254,16 @@ impl LlmClient {
         let hooks = self.hooks.clone();
 
         wasm_bindgen_futures::future_to_promise(async move {
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await?;
             let req_json = js_to_json(request.clone())?;
             let url = format!("{base_url}/audio/transcriptions");
             match fetch_json_post_with_auth(&url, &auth_header, req_json, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1213,16 +1281,16 @@ impl LlmClient {
         let hooks = self.hooks.clone();
 
         wasm_bindgen_futures::future_to_promise(async move {
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await?;
             let req_json = js_to_json(request.clone())?;
             let url = format!("{base_url}/moderations");
             match fetch_json_post_with_auth(&url, &auth_header, req_json, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1240,16 +1308,16 @@ impl LlmClient {
         let hooks = self.hooks.clone();
 
         wasm_bindgen_futures::future_to_promise(async move {
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await?;
             let req_json = js_to_json(request.clone())?;
             let url = format!("{base_url}/rerank");
             match fetch_json_post_with_auth(&url, &auth_header, req_json, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1270,16 +1338,16 @@ impl LlmClient {
         let hooks = self.hooks.clone();
 
         wasm_bindgen_futures::future_to_promise(async move {
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await?;
             let req_json = js_to_json(request.clone())?;
             let url = format!("{base_url}/files");
             match fetch_json_post_with_auth(&url, &auth_header, req_json, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1298,15 +1366,15 @@ impl LlmClient {
 
         wasm_bindgen_futures::future_to_promise(async move {
             let req_marker = JsValue::from_str(&file_id);
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await?;
             let url = format!("{base_url}/files/{file_id}");
             match fetch_json_get_with_auth(&url, &auth_header, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1325,15 +1393,15 @@ impl LlmClient {
 
         wasm_bindgen_futures::future_to_promise(async move {
             let req_marker = JsValue::from_str(&file_id);
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await?;
             let url = format!("{base_url}/files/{file_id}");
             match fetch_json_delete_with_auth(&url, &auth_header, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1352,7 +1420,7 @@ impl LlmClient {
         let hooks = self.hooks.clone();
 
         wasm_bindgen_futures::future_to_promise(async move {
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&query)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&query)).await?;
             let mut url = format!("{base_url}/files");
             if !query.is_null() && !query.is_undefined() {
                 let params = js_to_json(query.clone())?;
@@ -1372,11 +1440,11 @@ impl LlmClient {
             }
             match fetch_json_get_with_auth(&url, &auth_header, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[query, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[query, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[query, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[query, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1395,15 +1463,15 @@ impl LlmClient {
 
         wasm_bindgen_futures::future_to_promise(async move {
             let req_marker = JsValue::from_str(&file_id);
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await?;
             let url = format!("{base_url}/files/{file_id}/content");
             match fetch_bytes_get_with_auth(&url, &auth_header, max_retries).await {
                 Ok(resp_bytes) => {
-                    invoke_hooks(&hooks, "onResponse", &[req_marker, resp_bytes.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[req_marker, resp_bytes.clone()]).await;
                     Ok(resp_bytes)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1424,16 +1492,16 @@ impl LlmClient {
         let hooks = self.hooks.clone();
 
         wasm_bindgen_futures::future_to_promise(async move {
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await?;
             let req_json = js_to_json(request.clone())?;
             let url = format!("{base_url}/batches");
             match fetch_json_post_with_auth(&url, &auth_header, req_json, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1452,15 +1520,15 @@ impl LlmClient {
 
         wasm_bindgen_futures::future_to_promise(async move {
             let req_marker = JsValue::from_str(&batch_id);
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await?;
             let url = format!("{base_url}/batches/{batch_id}");
             match fetch_json_get_with_auth(&url, &auth_header, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1479,7 +1547,7 @@ impl LlmClient {
         let hooks = self.hooks.clone();
 
         wasm_bindgen_futures::future_to_promise(async move {
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&query)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&query)).await?;
             let mut url = format!("{base_url}/batches");
             if !query.is_null() && !query.is_undefined() {
                 let params = js_to_json(query.clone())?;
@@ -1499,11 +1567,11 @@ impl LlmClient {
             }
             match fetch_json_get_with_auth(&url, &auth_header, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[query, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[query, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[query, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[query, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1522,7 +1590,7 @@ impl LlmClient {
 
         wasm_bindgen_futures::future_to_promise(async move {
             let req_marker = JsValue::from_str(&batch_id);
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await?;
             let url = format!("{base_url}/batches/{batch_id}/cancel");
             match fetch_json_post_with_auth(
                 &url,
@@ -1533,11 +1601,11 @@ impl LlmClient {
             .await
             {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1558,16 +1626,16 @@ impl LlmClient {
         let hooks = self.hooks.clone();
 
         wasm_bindgen_futures::future_to_promise(async move {
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&request)).await?;
             let req_json = js_to_json(request.clone())?;
             let url = format!("{base_url}/responses");
             match fetch_json_post_with_auth(&url, &auth_header, req_json, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[request, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[request, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1586,15 +1654,15 @@ impl LlmClient {
 
         wasm_bindgen_futures::future_to_promise(async move {
             let req_marker = JsValue::from_str(&id);
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await?;
             let url = format!("{base_url}/responses/{id}");
             match fetch_json_get_with_auth(&url, &auth_header, max_retries).await {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1613,7 +1681,7 @@ impl LlmClient {
 
         wasm_bindgen_futures::future_to_promise(async move {
             let req_marker = JsValue::from_str(&id);
-            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await;
+            invoke_hooks(&hooks, "onRequest", std::slice::from_ref(&req_marker)).await?;
             let url = format!("{base_url}/responses/{id}/cancel");
             match fetch_json_post_with_auth(
                 &url,
@@ -1624,11 +1692,11 @@ impl LlmClient {
             .await
             {
                 Ok(resp_json) => {
-                    invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onResponse", &[req_marker, resp_json.clone()]).await;
                     Ok(resp_json)
                 }
                 Err(err) => {
-                    invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
+                    let _ = invoke_hooks(&hooks, "onError", &[req_marker, err.clone()]).await;
                     Err(err)
                 }
             }
@@ -1653,8 +1721,10 @@ impl LlmClient {
     /// ```
     #[wasm_bindgen(js_name = "registerProvider")]
     pub fn register_provider(config_json: &str) -> Result<(), JsValue> {
-        let config: liter_llm::CustomProviderConfig =
-            serde_json::from_str(config_json).map_err(|e| js_err(format!("invalid provider config: {e}")))?;
+        let json_value: serde_json::Value =
+            serde_json::from_str(config_json).map_err(|e| js_err(format!("invalid provider config JSON: {e}")))?;
+
+        let config = parse_provider_config_from_json(&json_value)?;
 
         liter_llm::register_custom_provider(config).map_err(|e| js_err(format!("failed to register provider: {e}")))
     }
@@ -1714,9 +1784,14 @@ impl LlmClient {
 ///
 /// Each hook is a JS object with optional `onRequest`, `onResponse`, and
 /// `onError` methods.  If the method exists and is a function, it is called.
-/// If it returns a `Promise`, that promise is awaited.  Errors from hook
-/// invocations are silently ignored — hooks are advisory.
-async fn invoke_hooks(hooks: &[JsValue], method_name: &str, args: &[JsValue]) {
+/// If it returns a `Promise`, that promise is awaited.
+///
+/// Errors from hook invocations (both synchronous throws and rejected
+/// Promises) are propagated to the caller as `Err(JsValue)`.  Callers
+/// that treat hooks as advisory (e.g. `onResponse`, `onError`) should
+/// discard the result; callers that use hooks as guardrails
+/// (e.g. `onRequest`) should propagate the error with `?`.
+async fn invoke_hooks(hooks: &[JsValue], method_name: &str, args: &[JsValue]) -> Result<(), JsValue> {
     let method_key = JsValue::from_str(method_name);
     for hook in hooks {
         if let Ok(func) = js_sys::Reflect::get(hook, &method_key)
@@ -1729,14 +1804,17 @@ async fn invoke_hooks(hooks: &[JsValue], method_name: &str, args: &[JsValue]) {
                 2 => f.call2(hook, &args[0], &args[1]),
                 _ => f.call1(hook, &args[0]), // fallback
             };
-            // If the hook returns a Promise, await it (best-effort).
-            if let Ok(val) = result
-                && val.is_instance_of::<Promise>()
-            {
-                let _ = JsFuture::from(Promise::from(val)).await;
+            match result {
+                Ok(val) if val.is_instance_of::<Promise>() => {
+                    // Await the Promise; propagate rejections.
+                    JsFuture::from(Promise::from(val)).await?;
+                }
+                Ok(_) => { /* Synchronous return — nothing to do. */ }
+                Err(e) => return Err(e),
             }
         }
     }
+    Ok(())
 }
 
 impl Drop for LlmClient {
@@ -1987,7 +2065,7 @@ fn create_sse_transform_stream(
     // create a ReadableStream whose `pull` method reads from the reader,
     // parses SSE lines, and enqueues JSON objects.
     let js_code = js_sys::Function::new_with_args(
-        "reader, onChunk, onDone",
+        "reader, onChunk, onDone, convertKeys",
         r#"
         let buffer = '';
         return new ReadableStream({
@@ -2016,7 +2094,8 @@ fn create_sse_transform_stream(
                             try {
                                 const parsed = JSON.parse(data);
                                 onChunk(parsed);
-                                controller.enqueue(parsed);
+                                const converted = convertKeys(JSON.stringify(parsed));
+                                controller.enqueue(converted);
                             } catch (e) {
                                 // Skip malformed JSON lines.
                             }
@@ -2064,12 +2143,31 @@ fn create_sse_transform_stream(
         let hooks_ref = hooks.clone();
         let req_ref = request.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            invoke_hooks(&hooks_ref, "onResponse", &[req_ref, JsValue::from_str("stream_done")]).await;
+            let _ = invoke_hooks(&hooks_ref, "onResponse", &[req_ref, JsValue::from_str("stream_done")]).await;
         });
     }) as Box<dyn FnMut()>);
 
+    // Create the convertKeys callback that converts a JSON string from
+    // snake_case keys to camelCase keys, returning a parsed JS object.
+    let convert_keys = Closure::wrap(Box::new(|json_str: String| -> JsValue {
+        let parsed: serde_json::Value = match serde_json::from_str(&json_str) {
+            Ok(v) => v,
+            Err(_) => return JsValue::NULL,
+        };
+        let camel = to_camel_case_keys(parsed);
+        camel
+            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            .unwrap_or(JsValue::NULL)
+    }) as Box<dyn FnMut(String) -> JsValue>);
+
+    let args = js_sys::Array::new();
+    args.push(&reader);
+    args.push(on_chunk.as_ref());
+    args.push(on_done.as_ref());
+    args.push(convert_keys.as_ref());
+
     let stream = js_code
-        .call3(&JsValue::UNDEFINED, &reader, on_chunk.as_ref(), on_done.as_ref())
+        .apply(&JsValue::UNDEFINED, &args)
         .map_err(|e| js_err(format!("failed to create SSE stream: {e:?}")))?;
 
     // Leak the closures so they remain alive for the lifetime of the stream.
@@ -2077,6 +2175,7 @@ fn create_sse_transform_stream(
     // callbacks; dropping them would cause a use-after-free.
     on_chunk.forget();
     on_done.forget();
+    convert_keys.forget();
 
     Ok(stream)
 }
@@ -2301,12 +2400,11 @@ async fn extract_json_from_response(response: JsValue) -> Result<JsValue, JsValu
         .dyn_into()
         .map_err(|_| js_err("response.json() did not return a Promise"))?;
 
-    // Return the parsed JS value directly instead of round-tripping through
-    // serde_json::Value.  The previous JsValue -> serde_json::Value -> JsValue
-    // conversion caused data loss in the Node.js WASM target, resulting in
-    // `chat()` and other methods resolving with null/undefined.
+    // Parse the response JSON and convert keys from snake_case to camelCase
+    // so JS consumers get idiomatic camelCase fields (promptTokens, finishReason, etc.).
     let json_value = JsFuture::from(json_promise).await?;
-    Ok(json_value)
+    let raw: serde_json::Value = serde_wasm_bindgen::from_value(json_value).map_err(js_err)?;
+    json_to_js_camel(raw)
 }
 
 // ─── Free-standing helpers ────────────────────────────────────────────────────

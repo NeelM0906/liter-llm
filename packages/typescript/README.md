@@ -190,7 +190,7 @@ LlmClient.registerProvider({
 
 Route requests to any of 142+ providers using a `"provider/model"` prefix:
 
-```
+```text
 openai/gpt-4o
 anthropic/claude-opus-4-5
 groq/llama3-70b-8192

@@ -1,4 +1,4 @@
-# C #
+# C
 
 <div align="center" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 20px 0;">
   <!-- Language Bindings -->
@@ -74,7 +74,7 @@ dotnet add package LiterLlm
 
 Or via NuGet Package Manager:
 
-```
+```text
 Install-Package LiterLlm
 ```
 
@@ -177,7 +177,7 @@ Built on a compiled Rust core for speed and safety:
 
 Route to 142+ providers using the `provider/model` prefix convention:
 
-```
+```text
 openai/gpt-4o
 anthropic/claude-3-5-sonnet-20241022
 groq/llama-3.1-70b-versatile

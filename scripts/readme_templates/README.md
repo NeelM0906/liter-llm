@@ -70,7 +70,7 @@ Templates use Jinja2 to generate README content by combining reusable partials.
 
 #### Template Hierarchy
 
-```
+```text
 readme_templates/
 ├── language_package.md.jinja      # Generic language template (used as fallback)
 ├── python.md.jinja                 # Python-specific template
@@ -116,7 +116,7 @@ Example:
 
 The Python script orchestrates the generation process.
 
-```
+```text
 generate_readme.py
 ├── load_config()           - Parse readme_config.yaml
 ├── setup_jinja_env()       - Configure Jinja2 with custom filters
@@ -161,7 +161,7 @@ python scripts/generate_readme.py --dry-run
 
 Output shows which files would be created:
 
-```
+```text
 INFO: [DRY-RUN] Would generate: /path/to/packages/python/README.md
 INFO: [DRY-RUN] Would generate: /path/to/packages/go/README.md
 ```
@@ -579,7 +579,29 @@ result = extract_file_sync("document.pdf")
 print(result.content)
 ```
 
-```
+
+```text
+
+
+```text
+
+```text
+
+```text
+
+```text
+
+```text
+
+```text
+
+```text
+
+```text
+
+```text
+
+```text
 
 Filter extracts the code block:
 ```
@@ -591,7 +613,7 @@ result = extract_file_sync("document.pdf")
 print(result.content)
 ```
 
-```
+```text
 
 **Raw Code Files (`.py`, `.go`, `.ts`, etc.):**
 ```python
@@ -603,7 +625,7 @@ print(result.content)
 
 Filter wraps it automatically:
 
-```
+```text
 ```python
 from kreuzberg import extract_file_sync
 
@@ -611,7 +633,7 @@ result = extract_file_sync("document.pdf")
 print(result.content)
 ```
 
-```
+```text
 
 #### Extension Mapping
 
@@ -639,14 +661,14 @@ The filter provides clear error messages:
 
 **Snippet Not Found:**
 
-```
+```text
 FileNotFoundError: Snippet not found: /path/to/docs/snippets/python/getting-started/basic.md
 Looking for: docs/snippets/python/getting-started/basic.md
 ```
 
 **Invalid Markdown (no code block):**
 
-```
+```text
 ValueError: No code block found in markdown snippet: /path/to/file.md
 Ensure file contains code wrapped in triple backticks
 ```
@@ -790,7 +812,7 @@ To add a custom section:
 
 Snippets are organized by language and category:
 
-```
+```text
 docs/snippets/
 ├── python/
 │   ├── getting-started/
@@ -837,9 +859,34 @@ result = extract_file_sync("document.pdf")
 print(result.content)
 ```
 
+
+```text
+
+```text
+
+
+```text
+
+```text
+
+
+```text
+
+```text
+
+
+```text
+
+```text
+
+
+```text
+
+```text
+
 The `include_snippet` filter automatically extracts the code block.
 
-```
+```text
 
 #### Option 2: Raw Code Files
 
@@ -876,7 +923,7 @@ In templates:
 
 Use numbered prefixes for sequential examples:
 
-```
+```text
 01_basic_extraction.py     # First example
 02_async_extraction.py     # Second example
 03_batch_processing.py     # Third example
@@ -955,7 +1002,7 @@ Common template errors:
 
 **Undefined variable:**
 
-```
+```text
 UndefinedError: 'ocr_backends' is undefined
 ```
 
@@ -963,7 +1010,7 @@ Solution: Check configuration has the required field.
 
 **Invalid filter:**
 
-```
+```text
 FilterArgumentError: 'include_snippet' takes 2 arguments
 ```
 
@@ -971,7 +1018,7 @@ Solution: Verify filter call has correct number of arguments.
 
 **Invalid syntax:**
 
-```
+```text
 TemplateAssertionError: No filter named 'nonexistent'
 ```
 
@@ -1083,7 +1130,7 @@ python scripts/generate_readme.py --validate
 
 2. **If validation fails:**
 
-   ```
+   ```text
    WARNING: Out of date: /path/to/packages/python/README.md
    ERROR: Some READMEs are out of date
    ```
@@ -1162,7 +1209,7 @@ To keep READMEs synchronized with templates:
 
 #### Issue: "Configuration file not found"
 
-```
+```text
 FileNotFoundError: Configuration file not found: /path/to/scripts/readme_config.yaml
 Create readme_config.yaml in scripts/ directory.
 ```
@@ -1175,7 +1222,7 @@ ls scripts/readme_config.yaml
 
 #### Issue: "Templates directory not found"
 
-```
+```text
 FileNotFoundError: Templates directory not found: /path/to/scripts/readme_templates/
 Create readme_templates/ directory in scripts/
 ```
@@ -1188,7 +1235,7 @@ ls -la scripts/readme_templates/
 
 #### Issue: "Template not found" for language
 
-```
+```text
 TemplateNotFound: Template not found: python.md.jinja
 Expected at: /path/to/scripts/readme_templates/python.md.jinja
 ```
@@ -1205,7 +1252,7 @@ grep 'template:' scripts/readme_config.yaml
 
 #### Issue: "Snippet not found"
 
-```
+```text
 FileNotFoundError: Snippet not found: /path/to/docs/snippets/python/basic.py
 Looking for: docs/snippets/python/basic.py
 ```
@@ -1223,7 +1270,7 @@ vim scripts/readme_config.yaml
 
 #### Issue: "No code block found in markdown snippet"
 
-```
+```text
 ValueError: No code block found in markdown snippet: /path/to/file.md
 Ensure file contains code wrapped in triple backticks
 ```
@@ -1240,7 +1287,29 @@ Description here.
 print("hello")
 ```
 
-```
+
+```text
+
+
+```text
+
+```text
+
+```text
+
+```text
+
+```text
+
+```text
+
+```text
+
+```text
+
+```text
+
+```text
 
 Correct format:
 - Opening: ``` (three backticks)
@@ -1254,7 +1323,7 @@ Correct format:
 
 ValueError: Failed to parse YAML configuration: mapping values are not allowed here
 
-```
+```text
 
 **Solution:** Check YAML syntax in `readme_config.yaml`:
 ```bash
@@ -1270,7 +1339,7 @@ python -c "import yaml; yaml.safe_load(open('scripts/readme_config.yaml'))"
 
 #### Issue: Jinja2 undefined variable
 
-```
+```text
 UndefinedError: 'package_manager' is undefined
 ```
 

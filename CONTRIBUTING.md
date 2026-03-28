@@ -5,11 +5,11 @@ Thank you for your interest in contributing to liter-llm! This guide will help y
 ## Table of Contents
 
 - [Development Setup](#development-setup)
-    - [Task Installation](#task-installation)
-    - [Quick Start](#quick-start)
+  - [Task Installation](#task-installation)
+  - [Quick Start](#quick-start)
 - [Development Workflow](#development-workflow)
-    - [Common Commands](#common-commands)
-    - [Language-Specific Tasks](#language-specific-tasks)
+  - [Common Commands](#common-commands)
+  - [Language-Specific Tasks](#language-specific-tasks)
 - [Adding Providers](#adding-providers)
 - [E2E Tests](#e2e-tests)
 - [Exploring Tasks](#exploring-tasks)
@@ -211,11 +211,11 @@ task c:e2e:test        # Run C E2E tests
 
     Fields:
 
-    - `base_url` (required): Provider API base URL
-    - `auth_header` (required): Header name for authentication
-    - `auth_prefix` (optional): Prefix for the auth value (e.g. "Bearer")
-    - `model_prefixes` (required): Model name prefixes that route to this provider
-    - `parameter_mappings` (optional): Map OpenAI parameter names to provider-specific names
+   - `base_url` (required): Provider API base URL
+   - `auth_header` (required): Header name for authentication
+   - `auth_prefix` (optional): Prefix for the auth value (e.g. "Bearer")
+   - `model_prefixes` (required): Model name prefixes that route to this provider
+   - `parameter_mappings` (optional): Map OpenAI parameter names to provider-specific names
 
 1. **Regenerate types**
 

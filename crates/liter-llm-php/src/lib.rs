@@ -36,35 +36,19 @@ use std::sync::Arc;
 
 use ext_php_rs::prelude::*;
 use ext_php_rs::types::Zval;
-use liter_llm::tower::{BudgetConfig, CacheConfig, Enforcement, LlmHook, LlmRequest, LlmResponse};
+use liter_llm::tower::{LlmHook, LlmRequest, LlmResponse};
 use liter_llm::{
-    AuthHeaderFormat, BatchClient, ClientConfigBuilder, CustomProviderConfig, FileClient, LiterLlmError, LlmClient,
-    ManagedClient, ResponseClient, register_custom_provider, unregister_custom_provider,
+    BatchClient, FileClient, LiterLlmError, LlmClient, ManagedClient, ResponseClient, register_custom_provider,
+    unregister_custom_provider,
 };
+use liter_llm_bindings_core::{config, error, runtime};
 
 // ─── Tokio runtime ────────────────────────────────────────────────────────────
 
-/// Shared Tokio runtime for blocking on async calls.
+/// Drive `future` to completion on the shared current-thread runtime
+/// provided by `liter-llm-bindings-core`.
 ///
-/// PHP workers are long-lived processes (FPM), so we create one runtime per
-/// process and keep it alive.  A `current_thread` runtime is sufficient
-/// because PHP's concurrency model is single-threaded per worker — there is
-/// no benefit to a thread pool here, and `current_thread` avoids spawning
-/// extra OS threads.
-///
-/// Construction errors are stored as a string and surfaced as PHP exceptions
-/// at call time rather than panicking at startup.
-static RUNTIME: std::sync::LazyLock<Result<tokio::runtime::Runtime, String>> = std::sync::LazyLock::new(|| {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .thread_name("liter-llm-php")
-        .build()
-        .map_err(|e| format!("Failed to create Tokio runtime: {e}"))
-});
-
-/// Drive `future` to completion on the shared current-thread runtime.
-///
-/// `block_in_place` is intentionally omitted: `RUNTIME` is a
+/// `block_in_place` is intentionally omitted: the runtime is a
 /// `current_thread` runtime and `block_in_place` panics on that flavour
 /// because there are no worker threads to yield to.  If this function is
 /// somehow called from within another Tokio runtime the resulting
@@ -74,7 +58,7 @@ fn block_on_future<F, T>(future: F) -> PhpResult<T>
 where
     F: std::future::Future<Output = T>,
 {
-    let rt = RUNTIME.as_ref().map_err(|e| PhpException::from(e.clone()))?;
+    let rt = runtime::current_thread_runtime();
     Ok(rt.block_on(future))
 }
 
@@ -203,45 +187,18 @@ impl LlmHook for PhpHookBridge {
 
 // ─── Config parsing helpers ──────────────────────────────────────────────────
 
-/// Parse a JSON string into a `CacheConfig`.
-///
-/// Expected JSON: `{"max_entries": 256, "ttl_seconds": 300}`
-fn parse_cache_config_json(json: &str) -> PhpResult<CacheConfig> {
+/// Parse a JSON string into a `CacheConfig` using the shared bindings-core helper.
+fn parse_cache_config_json(json: &str) -> PhpResult<liter_llm::tower::CacheConfig> {
     let val: serde_json::Value =
         serde_json::from_str(json).map_err(|e| PhpException::from(format!("invalid cache config JSON: {e}")))?;
-    let max_entries = val.get("max_entries").and_then(|v| v.as_u64()).unwrap_or(256) as usize;
-    let ttl_seconds = val.get("ttl_seconds").and_then(|v| v.as_u64()).unwrap_or(300);
-    Ok(CacheConfig {
-        max_entries,
-        ttl: std::time::Duration::from_secs(ttl_seconds),
-    })
+    config::parse_cache_config(&val).map_err(PhpException::from)
 }
 
-/// Parse a JSON string into a `BudgetConfig`.
-///
-/// Expected JSON: `{"global_limit": 10.0, "model_limits": {"gpt-4": 5.0}, "enforcement": "hard"}`
-fn parse_budget_config_json(json: &str) -> PhpResult<BudgetConfig> {
+/// Parse a JSON string into a `BudgetConfig` using the shared bindings-core helper.
+fn parse_budget_config_json(json: &str) -> PhpResult<liter_llm::tower::BudgetConfig> {
     let val: serde_json::Value =
         serde_json::from_str(json).map_err(|e| PhpException::from(format!("invalid budget config JSON: {e}")))?;
-    let global_limit = val.get("global_limit").and_then(|v| v.as_f64());
-    let model_limits = val
-        .get("model_limits")
-        .and_then(|v| v.as_object())
-        .map(|obj| {
-            obj.iter()
-                .filter_map(|(k, v)| v.as_f64().map(|f| (k.clone(), f)))
-                .collect()
-        })
-        .unwrap_or_default();
-    let enforcement = match val.get("enforcement").and_then(|v| v.as_str()).unwrap_or("hard") {
-        "soft" => Enforcement::Soft,
-        _ => Enforcement::Hard,
-    };
-    Ok(BudgetConfig {
-        global_limit,
-        model_limits,
-        enforcement,
-    })
+    config::parse_budget_config(&val).map_err(PhpException::from)
 }
 
 // ─── LlmClient PHP class ──────────────────────────────────────────────────────
@@ -279,29 +236,21 @@ impl PhpLlmClient {
         cache_json: Option<String>,
         budget_json: Option<String>,
     ) -> PhpResult<Self> {
-        let mut builder = ClientConfigBuilder::new(api_key);
+        let cache_config = cache_json.as_deref().map(parse_cache_config_json).transpose()?;
+        let budget_config = budget_json.as_deref().map(parse_budget_config_json).transpose()?;
 
-        if let Some(url) = base_url {
-            builder = builder.base_url(url);
-        }
-        if let Some(retries) = max_retries {
-            builder = builder.max_retries(retries);
-        }
-        if let Some(secs) = timeout_secs {
-            builder = builder.timeout(std::time::Duration::from_secs(secs));
-        }
-        if let Some(ref json) = cache_json {
-            let cache_cfg = parse_cache_config_json(json)?;
-            builder = builder.cache(cache_cfg);
-        }
-        if let Some(ref json) = budget_json {
-            let budget_cfg = parse_budget_config_json(json)?;
-            builder = builder.budget(budget_cfg);
-        }
+        let opts = config::ClientOptions {
+            api_key,
+            base_url,
+            model_hint,
+            max_retries,
+            timeout_secs,
+            cache_config,
+            budget_config,
+            hooks: Vec::new(),
+        };
 
-        let config = builder.build();
-        let client =
-            ManagedClient::new(config, model_hint.as_deref()).map_err(|e| PhpException::from(e.to_string()))?;
+        let client = config::build_managed_client(opts).map_err(|e| PhpException::from(error::format_error(&e)))?;
 
         Ok(Self { inner: client })
     }
@@ -747,36 +696,10 @@ pub fn liter_llm_register_provider(config_json: String) -> PhpResult<()> {
     let val: serde_json::Value = serde_json::from_str(&config_json)
         .map_err(|e| PhpException::from(format!("invalid provider config JSON: {e}")))?;
 
-    let name = val
-        .get("name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| PhpException::from("provider config requires 'name' (string)".to_string()))?
-        .to_owned();
-    let base_url = val
-        .get("base_url")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| PhpException::from("provider config requires 'base_url' (string)".to_string()))?
-        .to_owned();
-    let auth_header_str = val.get("auth_header").and_then(|v| v.as_str()).unwrap_or("bearer");
-    let auth_header = match auth_header_str {
-        "none" => AuthHeaderFormat::None,
-        s if s.starts_with("api-key:") => AuthHeaderFormat::ApiKey(s.trim_start_matches("api-key:").trim().to_owned()),
-        _ => AuthHeaderFormat::Bearer,
-    };
-    let model_prefixes: Vec<String> = val
-        .get("model_prefixes")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default();
+    let provider_config =
+        config::parse_provider_config(&val).map_err(|e| PhpException::from(format!("invalid provider config: {e}")))?;
 
-    let config = CustomProviderConfig {
-        name,
-        base_url,
-        auth_header,
-        model_prefixes,
-    };
-
-    register_custom_provider(config).map_err(|e| PhpException::from(e.to_string()))
+    register_custom_provider(provider_config).map_err(|e| PhpException::from(e.to_string()))
 }
 
 /// Unregister a previously registered custom provider by name.

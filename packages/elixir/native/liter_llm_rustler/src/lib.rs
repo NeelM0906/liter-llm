@@ -10,7 +10,6 @@
 //! The NIFs use a global Tokio runtime and `block_on` so they never run on
 //! the BEAM scheduler threads.
 
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use liter_llm::client::{BatchClient, FileClient, LlmClient, ResponseClient};
@@ -22,20 +21,14 @@ use liter_llm::types::moderation::ModerationRequest;
 use liter_llm::types::rerank::RerankRequest;
 use liter_llm::types::responses::CreateResponseRequest;
 use liter_llm::{ChatCompletionChunk, ChatCompletionRequest, ClientConfig, DefaultClient, EmbeddingRequest};
+use liter_llm_bindings_core::runtime::current_thread_runtime;
 use rustler::{Error as NifError, NifResult, OwnedBinary};
 use serde::Deserialize;
-use tokio::runtime::Runtime;
 
 // ─── Tokio runtime ────────────────────────────────────────────────────────────
 
-fn runtime() -> &'static Runtime {
-    static RT: OnceLock<Runtime> = OnceLock::new();
-    RT.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("failed to create Tokio runtime for liter_llm_rustler")
-    })
+fn runtime() -> &'static tokio::runtime::Runtime {
+    current_thread_runtime()
 }
 
 // ─── Client construction helpers ─────────────────────────────────────────────
@@ -79,11 +72,11 @@ fn nif_err(msg: impl Into<String>) -> NifError {
 }
 
 fn to_json<T: serde::Serialize>(value: &T) -> NifResult<String> {
-    serde_json::to_string(value).map_err(|e| nif_err(format!("serialization error: {e}")))
+    liter_llm_bindings_core::json::to_json(value).map_err(nif_err)
 }
 
 fn from_json<T: serde::de::DeserializeOwned>(json: &str, label: &str) -> NifResult<T> {
-    serde_json::from_str(json).map_err(|e| nif_err(format!("invalid {label}: {e}")))
+    liter_llm_bindings_core::json::from_json(json, label).map_err(nif_err)
 }
 
 // ─── Core inference NIFs ──────────────────────────────────────────────────────
