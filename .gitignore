@@ -161,3 +161,4 @@ todo.md
 .artifacts/
 .remote-cache/
 .pnpm-store/
+.env*

@@ -1,0 +1,42 @@
+api_key = "sk-test-full"
+base_url = "https://api.example.com/v1"
+model_hint = "openai"
+timeout_secs = 120
+max_retries = 5
+cooldown_secs = 30
+health_check_secs = 60
+cost_tracking = true
+tracing = true
+
+[cache]
+max_entries = 512
+ttl_seconds = 600
+backend = "memory"
+
+[budget]
+global_limit = 50.0
+enforcement = "hard"
+
+[budget.model_limits]
+"openai/gpt-4o" = 25.0
+"anthropic/claude-3-5-sonnet" = 15.0
+
+[rate_limit]
+rpm = 60
+tpm = 100000
+window_seconds = 120
+
+[extra_headers]
+"X-Custom-Header" = "custom-value"
+"X-Request-Id" = "test-123"
+
+[[providers]]
+name = "my-provider"
+base_url = "https://my-llm.example.com/v1"
+auth_header = "Authorization"
+model_prefixes = ["my-provider/"]
+
+[[providers]]
+name = "another-provider"
+base_url = "https://another.example.com/api"
+model_prefixes = ["another/", "alt/"]

@@ -1,0 +1,8 @@
+[cache]
+max_entries = 2048
+ttl_seconds = 3600
+backend = "s3"
+
+[cache.backend_config]
+bucket = "my-llm-cache"
+region = "us-west-2"

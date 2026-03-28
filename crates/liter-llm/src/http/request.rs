@@ -198,6 +198,7 @@ pub async fn post_binary(
         )
     )
 )]
+#[allow(dead_code)]
 pub async fn get_json<T: DeserializeOwned>(
     client: &reqwest::Client,
     url: &str,

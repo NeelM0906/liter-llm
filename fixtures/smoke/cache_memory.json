@@ -1,0 +1,23 @@
+{
+	"id": "smoke_cache_memory",
+	"category": "smoke",
+	"description": "Test in-memory caching by sending identical requests twice",
+	"api": {
+		"method": "chat",
+		"request": {
+			"model": "openai/gpt-4o-mini",
+			"messages": [{ "role": "user", "content": "What is 2+2? Answer with just the number." }],
+			"max_tokens": 5
+		}
+	},
+	"assertions": {
+		"status": "success",
+		"response_not_null": true,
+		"has_choices": true,
+		"both_succeed": true
+	},
+	"env": {
+		"api_key_var": "OPENAI_API_KEY"
+	},
+	"tags": ["smoke", "openai", "cache"]
+}

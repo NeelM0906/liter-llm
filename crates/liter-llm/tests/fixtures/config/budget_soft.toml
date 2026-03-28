@@ -1,0 +1,6 @@
+[budget]
+global_limit = 100.0
+enforcement = "soft"
+
+[budget.model_limits]
+"openai/gpt-4o" = 50.0

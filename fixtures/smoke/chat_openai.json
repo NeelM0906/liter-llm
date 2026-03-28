@@ -1,0 +1,23 @@
+{
+	"id": "smoke_chat_openai",
+	"category": "smoke",
+	"description": "Basic chat completion against real OpenAI API",
+	"api": {
+		"method": "chat",
+		"request": {
+			"model": "openai/gpt-4o-mini",
+			"messages": [{ "role": "user", "content": "Say hello in exactly one word." }],
+			"max_tokens": 10
+		}
+	},
+	"assertions": {
+		"status": "success",
+		"response_not_null": true,
+		"has_choices": true,
+		"has_usage": true
+	},
+	"env": {
+		"api_key_var": "OPENAI_API_KEY"
+	},
+	"tags": ["smoke", "openai", "chat"]
+}

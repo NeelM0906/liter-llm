@@ -205,6 +205,13 @@ impl Provider for VertexAiProvider {
 pub(crate) fn transform_gemini_request(body: &mut serde_json::Value) -> Result<()> {
     use serde_json::json;
 
+    // ── Embedding requests ────────────────────────────────────────────────
+    // Embedding requests have `input` instead of `messages`.  Convert from
+    // OpenAI embedding format to Gemini embedContent format.
+    if body.get("input").is_some() && body.get("messages").is_none() {
+        return transform_gemini_embed_request(body);
+    }
+
     // Extract extra_body before taking ownership of fields, since it may contain
     // Gemini-specific extensions (safety_settings, grounding_config, cached_content).
     let extra_body = body
@@ -414,6 +421,32 @@ pub(crate) fn transform_gemini_request(body: &mut serde_json::Value) -> Result<(
     Ok(())
 }
 
+/// Transform an OpenAI embedding request to Gemini `embedContent` format.
+///
+/// OpenAI: `{"model": "...", "input": "text"}`
+/// Gemini: `{"content": {"parts": [{"text": "text"}]}}`
+fn transform_gemini_embed_request(body: &mut serde_json::Value) -> Result<()> {
+    use serde_json::json;
+
+    let input = body.get("input").cloned().unwrap_or_default();
+
+    // Support both single string and array of strings
+    let text = match &input {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(arr) => arr.first().and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        _ => String::new(),
+    };
+
+    let new_body = json!({
+        "content": {
+            "parts": [{"text": text}]
+        }
+    });
+
+    *body = new_body;
+    Ok(())
+}
+
 /// Normalize a Gemini `generateContent` response to OpenAI chat completion format.
 ///
 /// Gemini wraps the response in `candidates[0].content.parts[]`.
@@ -428,6 +461,45 @@ pub(crate) fn transform_gemini_request(body: &mut serde_json::Value) -> Result<(
 /// response body -- the model is only present in the request URL path.
 pub(crate) fn transform_gemini_response(body: &mut serde_json::Value) -> Result<()> {
     use serde_json::json;
+
+    // ── List models response ────────────────────────────────────────────
+    // Gemini returns: {"models": [{"name": "models/gemini-pro", "displayName": "...", ...}]}
+    // Convert to OpenAI format: {"object":"list","data":[{"id":"gemini-pro","object":"model","created":0,"owned_by":"google"}]}
+    if let Some(models) = body.get("models").and_then(|m| m.as_array()) {
+        let data: Vec<serde_json::Value> = models
+            .iter()
+            .map(|m| {
+                let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                // Strip "models/" prefix from name
+                let id = name.strip_prefix("models/").unwrap_or(name);
+                json!({
+                    "id": id,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": "google"
+                })
+            })
+            .collect();
+        *body = json!({
+            "object": "list",
+            "data": data
+        });
+        return Ok(());
+    }
+
+    // ── Embedding response ────────────────────────────────────────────────
+    // Gemini embedContent returns: {"embedding": {"values": [...]}}
+    // Convert to OpenAI format: {"object":"list","data":[{"object":"embedding","embedding":[...],"index":0}],"model":""}
+    if body.get("embedding").is_some() {
+        let values = body.pointer("/embedding/values").cloned().unwrap_or(json!([]));
+        *body = json!({
+            "object": "list",
+            "data": [{"object": "embedding", "embedding": values, "index": 0}],
+            "model": "",
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        });
+        return Ok(());
+    }
 
     // Check for a blocked prompt (no candidates, but promptFeedback.blockReason set).
     let candidates = body.get("candidates").and_then(|c| c.as_array());

@@ -1,0 +1,20 @@
+{
+	"id": "smoke_list_models_openai",
+	"category": "smoke",
+	"description": "List models against real OpenAI API",
+	"api": {
+		"method": "list_models",
+		"request": {
+			"model": "openai/gpt-4o-mini"
+		}
+	},
+	"assertions": {
+		"status": "success",
+		"response_not_null": true,
+		"models_count_min": 1
+	},
+	"env": {
+		"api_key_var": "OPENAI_API_KEY"
+	},
+	"tags": ["smoke", "openai", "list-models"]
+}

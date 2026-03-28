@@ -1,0 +1,16 @@
+[project]
+name = "liter-llm-smoke-tests"
+version = "0.1.0"
+description = "Smoke tests for published liter-llm package"
+requires-python = ">=3.10"
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+  "liter-llm==1.0.0rc8",
+]

@@ -1,0 +1,22 @@
+{
+	"id": "smoke_streaming_openai",
+	"category": "smoke",
+	"description": "Chat streaming against real OpenAI API, verifies chunks received",
+	"api": {
+		"method": "chat_stream",
+		"request": {
+			"model": "openai/gpt-4o-mini",
+			"messages": [{ "role": "user", "content": "Count from 1 to 5." }],
+			"max_tokens": 50
+		}
+	},
+	"assertions": {
+		"status": "success",
+		"response_not_null": true,
+		"chunks_received_min": 1
+	},
+	"env": {
+		"api_key_var": "OPENAI_API_KEY"
+	},
+	"tags": ["smoke", "openai", "streaming"]
+}

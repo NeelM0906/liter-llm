@@ -1,0 +1,10 @@
+[[providers]]
+name = "custom-openai"
+base_url = "https://custom-openai.example.com/v1"
+auth_header = "X-Api-Key"
+model_prefixes = ["custom-openai/"]
+
+[[providers]]
+name = "local-llm"
+base_url = "http://localhost:8080/v1"
+model_prefixes = ["local/", "local-llm/"]

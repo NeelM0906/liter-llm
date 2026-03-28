@@ -1,0 +1,23 @@
+{
+	"id": "smoke_provider_routing",
+	"category": "smoke",
+	"description": "Test provider routing by sending requests to OpenAI and Anthropic",
+	"api": {
+		"method": "chat",
+		"request": {
+			"model": "openai/gpt-4o-mini",
+			"messages": [{ "role": "user", "content": "Say hi." }],
+			"max_tokens": 5
+		}
+	},
+	"assertions": {
+		"status": "success",
+		"response_not_null": true,
+		"has_choices": true,
+		"both_succeed": true
+	},
+	"env": {
+		"api_key_var": "OPENAI_API_KEY"
+	},
+	"tags": ["smoke", "openai", "anthropic", "routing"]
+}

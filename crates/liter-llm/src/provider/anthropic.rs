@@ -331,13 +331,14 @@ impl Provider for AnthropicProvider {
         }
 
         // ── 8. Remove unsupported parameters ──────────────────────────────────
+        // NOTE: `stream` is intentionally kept — Anthropic requires it in the
+        // request body to enable streaming responses.
         if let Some(obj) = body.as_object_mut() {
             for key in &[
                 "n",
                 "presence_penalty",
                 "frequency_penalty",
                 "logit_bias",
-                "stream",
                 "stream_options",
                 "parallel_tool_calls",
                 "service_tier",
@@ -1360,9 +1361,11 @@ mod tests {
 
         provider().transform_request(&mut body).unwrap();
 
-        for key in &["n", "presence_penalty", "frequency_penalty", "logit_bias", "stream"] {
+        for key in &["n", "presence_penalty", "frequency_penalty", "logit_bias"] {
             assert!(body.get(key).is_none(), "`{key}` should be removed");
         }
+        // stream is intentionally preserved — Anthropic requires it for streaming.
+        assert_eq!(body["stream"], true);
     }
 
     #[test]

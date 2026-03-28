@@ -230,6 +230,8 @@ pub struct JsonSchemaFormat {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
     pub prompt_tokens: u64,
+    /// Completion tokens used. Defaults to 0 when absent (e.g. embedding responses).
+    #[serde(default)]
     pub completion_tokens: u64,
     pub total_tokens: u64,
 }

@@ -49,9 +49,20 @@
 			"minLength": 5,
 			"description": "Human-readable description of what this fixture tests"
 		},
+		"env": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"api_key_var": {
+					"type": "string",
+					"description": "Environment variable name holding the API key for live tests"
+				}
+			},
+			"description": "Environment configuration for live/smoke tests against real APIs"
+		},
 		"api": {
 			"type": "object",
-			"required": ["method", "request", "mock_response"],
+			"required": ["method", "request"],
 			"additionalProperties": false,
 			"properties": {
 				"method": {
@@ -122,8 +133,34 @@
 			"description": "Key-value assertions to verify on the response",
 			"additionalProperties": true,
 			"properties": {
+				"status": {
+					"type": "string",
+					"enum": ["success", "error"],
+					"description": "Expected overall response status"
+				},
 				"response_not_null": {
 					"type": "boolean"
+				},
+				"has_choices": {
+					"type": "boolean",
+					"description": "Assert response has non-empty choices array"
+				},
+				"has_usage": {
+					"type": "boolean",
+					"description": "Assert response includes usage data"
+				},
+				"has_embeddings": {
+					"type": "boolean",
+					"description": "Assert response includes embedding data"
+				},
+				"chunks_received_min": {
+					"type": "integer",
+					"minimum": 1,
+					"description": "Minimum number of streaming chunks expected"
+				},
+				"both_succeed": {
+					"type": "boolean",
+					"description": "Assert multiple requests all succeed"
 				},
 				"choices_count": {
 					"type": "integer",

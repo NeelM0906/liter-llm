@@ -474,7 +474,9 @@ impl LlmClient for DefaultClient {
             let all_headers = self.all_headers("GET", &url, &serde_json::Value::Null, &[]);
             let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
 
-            http::request::get_json(&self.http, &url, auth, &extra, self.config.max_retries).await
+            let mut raw = http::request::get_json_raw(&self.http, &url, auth, &extra, self.config.max_retries).await?;
+            self.provider.transform_response(&mut raw)?;
+            serde_json::from_value::<ModelsListResponse>(raw).map_err(LiterLlmError::from)
         })
     }
 
