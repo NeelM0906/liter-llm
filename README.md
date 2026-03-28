@@ -100,7 +100,9 @@ An honest look at where things stand. We're newer and leaner -- litellm has brea
 | **Lifecycle hooks** | onRequest/onResponse/onError per-client | Callback integrations |
 | **Budget enforcement** | Per-model + global limits, hard/soft modes | Per-key/team budgets |
 | **Health checks** | Automatic provider probes + cooldown | -- |
-| **Custom providers** | Runtime `register_provider` API | Config + code-based |
+| **Custom providers** | Runtime API + TOML config file | Config + code-based |
+| **Config files** | TOML with auto-discovery (`liter-llm.toml`) | YAML proxy config |
+| **Search / OCR** | 12 search + 4 OCR providers | Yes |
 | **Image generation** | Yes | Yes |
 
 ## Key Features
@@ -108,10 +110,13 @@ An honest look at where things stand. We're newer and leaner -- litellm has brea
 - **142 providers** -- OpenAI, Anthropic, Google, AWS Bedrock, Groq, Mistral, Together AI, Fireworks, Perplexity, DeepSeek, Cohere, and [130+ more](schemas/providers.json)
 - **11 native bindings** -- Rust, Python, TypeScript/Node.js, Go, Java, Ruby, PHP, C#, Elixir, WebAssembly, C/FFI
 - **First-class streaming** -- SSE and AWS EventStream binary protocol with zero-copy buffers
+- **TOML configuration** -- `liter-llm.toml` with auto-discovery, custom providers, cache backends, middleware config
 - **OpenTelemetry** -- GenAI semantic conventions, cost tracking spans, HTTP-level tracing
-- **Tower middleware** -- Rate limiting, LRU caching, cost estimation, health checks, cooldowns, fallback -- all composable
+- **Tower middleware** -- Rate limiting, caching (40+ OpenDAL backends), cost tracking, budget enforcement, health checks, cooldowns, hooks, fallback -- all composable
+- **Search & OCR** -- Web search across 12 providers, document OCR across 4 providers
 - **Tool calling** -- Parallel tools, structured outputs, JSON schema validation
 - **Embeddings** -- Dimension selection, base64 format, multi-provider support
+- **Per-request routing** -- Automatic provider detection from model name prefix, custom provider registration at runtime
 - **Schema-driven** -- Provider registry and API types compiled from JSON schemas, no runtime lookups
 
 ## Architecture
@@ -151,30 +156,57 @@ Install in your language of choice:
 | Ruby | `gem install liter_llm` |
 | PHP | `composer require kreuzberg/liter-llm` |
 | C# | `dotnet add package LiterLlm` |
-| Elixir | `{:liter_llm, "~> 0.1"}` in mix.exs |
+| Elixir | `{:liter_llm, "~> 1.0"}` in mix.exs |
 | WASM | `pnpm add @kreuzberg/liter-llm-wasm` |
 | C/FFI | Build from source -- see [FFI crate](crates/liter-llm-ffi) |
 
 ### Usage
 
 ```python
+import asyncio, os
 from liter_llm import LlmClient
 
-client = LlmClient()
+async def main():
+    client = LlmClient(api_key=os.environ["OPENAI_API_KEY"])
 
-# Chat with any provider using the provider/model prefix
-response = client.chat(
-    model="openai/gpt-4o",
-    messages=[{"role": "user", "content": "Hello!"}],
-)
-print(response.choices[0].message.content)
+    # Chat with any provider using the provider/model prefix
+    response = await client.chat(
+        model="openai/gpt-4o",
+        messages=[{"role": "user", "content": "Hello!"}],
+    )
+    print(response.choices[0].message.content)
 
-# Stream responses
-for chunk in client.chat_stream(
-    model="anthropic/claude-3-5-sonnet-20241022",
-    messages=[{"role": "user", "content": "Tell me a story"}],
-):
-    print(chunk.delta, end="", flush=True)
+    # Switch providers by changing the prefix -- no other code changes
+    client2 = LlmClient(api_key=os.environ["ANTHROPIC_API_KEY"])
+    response = await client2.chat(
+        model="anthropic/claude-sonnet-4-20250514",
+        messages=[{"role": "user", "content": "Hello!"}],
+    )
+    print(response.choices[0].message.content)
+
+asyncio.run(main())
+```
+
+Or use a `liter-llm.toml` config file instead of passing everything in code:
+
+```toml
+api_key = "sk-..."
+timeout_secs = 120
+
+[cache]
+max_entries = 512
+ttl_seconds = 600
+backend = "redis"
+backend_config = { connection_string = "redis://localhost:6379" }
+
+[budget]
+global_limit = 50.0
+enforcement = "hard"
+
+[[providers]]
+name = "my-provider"
+base_url = "https://my-llm.example.com/v1"
+model_prefixes = ["my-provider/"]
 ```
 
 The same API is available in all 11 languages -- see the language READMEs below for idiomatic examples.

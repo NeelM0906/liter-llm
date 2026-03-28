@@ -65,11 +65,14 @@ API keys are wrapped in [`secrecy::SecretString`](https://docs.rs/secrecy/), obs
 - **Polyglot** -- Native bindings for 11 languages from a single Rust core
 - **142 Providers** -- OpenAI, Anthropic, Google, Bedrock, Groq, Mistral, and more
 - **Streaming** -- First-class SSE and AWS EventStream support
+- **TOML Configuration** -- `liter-llm.toml` with auto-discovery, custom providers, cache backends
 - **Observability** -- Built-in OpenTelemetry with GenAI semantic conventions
 - **Type Safe** -- Compile-time checked types across all bindings
 - **Secure** -- API keys wrapped in `secrecy::SecretString`, never logged or exposed
-- **Middleware** -- Composable Tower stack: rate limiting, caching, cost tracking, health checks, fallback
+- **Middleware** -- Composable Tower stack: rate limiting, caching (40+ OpenDAL backends), cost tracking, budget enforcement, health checks, cooldown, hooks, fallback
+- **Search & OCR** -- Web search across 12 providers, document OCR across 4 providers
 - **Tool Calling** -- Parallel tools, structured outputs, JSON schema validation
+- **Per-Request Routing** -- Automatic provider detection from model prefix, custom providers at runtime
 
 ## Quick Example
 
