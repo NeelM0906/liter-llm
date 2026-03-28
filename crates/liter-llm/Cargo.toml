@@ -45,6 +45,7 @@ bedrock-auth = ["native-http"]
 # loading and token counting for text and chat completion requests.
 tokenizer = ["dep:tokenizers"]
 # Full feature set: native HTTP + tower + tracing + otel + bedrock + tokenizer + auth providers.
+opendal-cache = ["dep:opendal", "tower"]
 full = [
     "native-http",
     "tower",
@@ -55,6 +56,7 @@ full = [
     "azure-auth",
     "vertex-auth",
     "bedrock-auth",
+    "opendal-cache",
 ]
 default = ["native-http"]
 
@@ -68,6 +70,7 @@ futures-core = { workspace = true }
 futures-util = { workspace = true, optional = true }
 jsonwebtoken = { workspace = true, optional = true }
 memchr = { workspace = true, optional = true }
+opendal = { workspace = true, optional = true }
 opentelemetry = { workspace = true, optional = true }
 pin-project-lite = { workspace = true }
 reqwest = { workspace = true, optional = true }

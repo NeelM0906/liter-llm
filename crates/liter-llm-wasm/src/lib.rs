@@ -7,10 +7,7 @@
 //!
 //! HTTP calls cannot use `reqwest`'s native TLS or TCP stack in WASM.  The
 //! actual requests are made by delegating to the browser / Node.js `fetch` API
-//! through `web_sys` / `wasm-bindgen-futures`.  For now the networking layer
-//! is marked with `TODO` comments where the real fetch calls need to be wired
-//! in; everything else (type conversion, config parsing, error wrapping) is
-//! fully implemented.
+//! through `web_sys` / `wasm-bindgen-futures`.
 //!
 //! # Usage (JavaScript / TypeScript)
 //!

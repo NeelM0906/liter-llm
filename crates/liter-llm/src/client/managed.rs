@@ -1,6 +1,7 @@
 //! A managed LLM client that optionally routes requests through a Tower
-//! middleware stack (cache, budget, hooks) when the corresponding
-//! [`ClientConfig`] fields are set.
+//! middleware stack (cache, budget, hooks, cooldown, rate limiting, health
+//! checks, cost tracking, tracing) when the corresponding [`ClientConfig`]
+//! fields are set.
 //!
 //! When no middleware is configured the client delegates directly to the
 //! underlying [`DefaultClient`], adding zero overhead.  When middleware *is*
@@ -28,15 +29,22 @@ use tower::{Layer, Service};
 use super::config::ClientConfig;
 use super::{BatchClient, BoxFuture, BoxStream, DefaultClient, FileClient, LlmClient, ResponseClient};
 use crate::error::{LiterLlmError, Result};
+#[cfg(feature = "opendal-cache")]
+use crate::tower::OpenDalCacheStore;
 use crate::tower::types::{LlmRequest, LlmResponse};
-use crate::tower::{BudgetLayer, BudgetState, CacheLayer, HooksLayer, LlmService};
+use crate::tower::{
+    BudgetLayer, BudgetState, CacheBackend, CacheLayer, CooldownLayer, CostTrackingLayer, HealthCheckLayer, HooksLayer,
+    LlmService, ModelRateLimitLayer, TracingLayer,
+};
 use crate::types::audio::{CreateSpeechRequest, CreateTranscriptionRequest, TranscriptionResponse};
 use crate::types::batch::{BatchListQuery, BatchListResponse, BatchObject, CreateBatchRequest};
 use crate::types::files::{CreateFileRequest, DeleteResponse, FileListQuery, FileListResponse, FileObject};
 use crate::types::image::{CreateImageRequest, ImagesResponse};
 use crate::types::moderation::{ModerationRequest, ModerationResponse};
+use crate::types::ocr::{OcrRequest, OcrResponse};
 use crate::types::rerank::{RerankRequest, RerankResponse};
 use crate::types::responses::{CreateResponseRequest, ResponseObject};
+use crate::types::search::{SearchRequest, SearchResponse};
 use crate::types::{
     ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, EmbeddingRequest, EmbeddingResponse,
     ModelsListResponse,
@@ -70,12 +78,13 @@ impl SyncService {
 // ---------------------------------------------------------------------------
 
 /// A managed LLM client that wraps [`DefaultClient`] with optional Tower
-/// middleware (cache, budget, hooks).
+/// middleware (cache, cooldown, rate limiting, health checks, cost tracking,
+/// budget, hooks, tracing).
 ///
 /// Construct via [`ManagedClient::new`].  If the provided [`ClientConfig`]
-/// contains cache, budget, or hook configuration the corresponding Tower
-/// layers are composed into a service stack.  Otherwise requests pass
-/// straight through to the inner [`DefaultClient`].
+/// contains any middleware configuration the corresponding Tower layers are
+/// composed into a service stack.  Otherwise requests pass straight through
+/// to the inner [`DefaultClient`].
 ///
 /// `ManagedClient` implements [`LlmClient`] and can be used everywhere a
 /// `DefaultClient` is expected.
@@ -104,7 +113,8 @@ impl ManagedClient {
     /// `model_hint` guides provider auto-detection — see
     /// [`DefaultClient::new`] for details.
     ///
-    /// If the config contains cache, budget, or hook settings the
+    /// If the config contains any middleware settings (cache, budget, hooks,
+    /// cooldown, rate limit, health check, cost tracking, tracing) the
     /// corresponding Tower layers are composed into a service stack.
     /// Otherwise requests pass straight through to the inner client.
     ///
@@ -177,19 +187,26 @@ fn build_service_stack(
     let has_cache = config.cache_config.is_some();
     let has_budget = config.budget_config.is_some();
     let has_hooks = !config.hooks.is_empty();
+    let has_cooldown = config.cooldown_duration.is_some();
+    let has_rate_limit = config.rate_limit_config.is_some();
+    let has_health_check = config.health_check_interval.is_some();
+    let has_cost = config.enable_cost_tracking;
+    let has_tracing = config.enable_tracing;
 
-    if !has_cache && !has_budget && !has_hooks {
+    if !has_cache
+        && !has_budget
+        && !has_hooks
+        && !has_cooldown
+        && !has_rate_limit
+        && !has_health_check
+        && !has_cost
+        && !has_tracing
+    {
         return (None, None);
     }
 
     // Start with the base LlmService wrapping the DefaultClient.
     let base = LlmService::new_from_arc(client);
-
-    // Layer application order: hooks (outermost) -> budget -> cache -> base
-    // service (innermost).  This means:
-    //   - Hooks see every request first (can reject / audit).
-    //   - Budget checks happen next (can reject if over budget).
-    //   - Cache is closest to the base (avoids budget charge for cache hits).
 
     let mut budget_state: Option<Arc<BudgetState>> = None;
 
@@ -200,19 +217,65 @@ fn build_service_stack(
     // Start by boxing the base service.
     let svc: Bcs = tower::util::BoxCloneService::new(base);
 
-    // Apply cache layer.
+    // 1. Cache (innermost — avoids hitting downstream for cached responses).
     let svc = if let Some(ref cache_cfg) = config.cache_config {
         let layer = if let Some(ref store) = config.cache_store {
             CacheLayer::with_store(Arc::clone(store))
         } else {
-            CacheLayer::new(cache_cfg.clone())
+            match &cache_cfg.backend {
+                CacheBackend::Memory => CacheLayer::new(cache_cfg.clone()),
+                #[cfg(feature = "opendal-cache")]
+                CacheBackend::OpenDal {
+                    scheme,
+                    config: backend_config,
+                } => {
+                    match OpenDalCacheStore::from_config(scheme, backend_config.clone(), "llm-cache/", cache_cfg.ttl) {
+                        Ok(store) => CacheLayer::with_store(Arc::new(store)),
+                        Err(e) => {
+                            tracing::warn!("Failed to create OpenDAL cache store, falling back to in-memory: {e}");
+                            CacheLayer::new(cache_cfg.clone())
+                        }
+                    }
+                }
+            }
         };
         tower::util::BoxCloneService::new(layer.layer(svc))
     } else {
         svc
     };
 
-    // Apply budget layer.
+    // 2. Health check — rejects requests when provider is unhealthy.
+    let svc = if let Some(interval) = config.health_check_interval {
+        let layer = HealthCheckLayer::new(interval);
+        tower::util::BoxCloneService::new(layer.layer(svc))
+    } else {
+        svc
+    };
+
+    // 3. Cooldown — rejects requests during cooldown after transient errors.
+    let svc = if let Some(duration) = config.cooldown_duration {
+        let layer = CooldownLayer::new(duration);
+        tower::util::BoxCloneService::new(layer.layer(svc))
+    } else {
+        svc
+    };
+
+    // 4. Rate limit — enforces per-model RPM/TPM limits.
+    let svc = if let Some(ref rl_cfg) = config.rate_limit_config {
+        let layer = ModelRateLimitLayer::new(rl_cfg.clone());
+        tower::util::BoxCloneService::new(layer.layer(svc))
+    } else {
+        svc
+    };
+
+    // 5. Cost tracking — records estimated USD cost on tracing spans.
+    let svc = if has_cost {
+        tower::util::BoxCloneService::new(CostTrackingLayer.layer(svc))
+    } else {
+        svc
+    };
+
+    // 6. Budget — enforces spending limits.
     let svc = if let Some(ref budget_cfg) = config.budget_config {
         let state = Arc::new(BudgetState::new());
         budget_state = Some(Arc::clone(&state));
@@ -222,10 +285,17 @@ fn build_service_stack(
         svc
     };
 
-    // Apply hooks layer.
+    // 7. Hooks — user-defined pre/post request callbacks.
     let svc = if has_hooks {
         let layer = HooksLayer::new(config.hooks.clone());
         tower::util::BoxCloneService::new(layer.layer(svc))
+    } else {
+        svc
+    };
+
+    // 8. Tracing (outermost — wraps everything in an OpenTelemetry span).
+    let svc = if has_tracing {
+        tower::util::BoxCloneService::new(TracingLayer.layer(svc))
     } else {
         svc
     };
@@ -369,6 +439,36 @@ impl LlmClient for ManagedClient {
                 LlmResponse::Rerank(r) => Ok(r),
                 other => Err(LiterLlmError::InternalError {
                     message: format!("expected Rerank response, got {other:?}"),
+                }),
+            }
+        })
+    }
+
+    fn search(&self, req: SearchRequest) -> BoxFuture<'_, SearchResponse> {
+        if self.service.is_none() {
+            return self.inner.search(req);
+        }
+        let fut = self.call_service(LlmRequest::Search(req));
+        Box::pin(async move {
+            match fut.await? {
+                LlmResponse::Search(r) => Ok(r),
+                other => Err(LiterLlmError::InternalError {
+                    message: format!("expected Search response, got {other:?}"),
+                }),
+            }
+        })
+    }
+
+    fn ocr(&self, req: OcrRequest) -> BoxFuture<'_, OcrResponse> {
+        if self.service.is_none() {
+            return self.inner.ocr(req);
+        }
+        let fut = self.call_service(LlmRequest::Ocr(req));
+        Box::pin(async move {
+            match fut.await? {
+                LlmResponse::Ocr(r) => Ok(r),
+                other => Err(LiterLlmError::InternalError {
+                    message: format!("expected Ocr response, got {other:?}"),
                 }),
             }
         })

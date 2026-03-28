@@ -28,6 +28,22 @@ use crate::types::{ChatCompletionResponse, EmbeddingResponse};
 
 // ---- Config ----------------------------------------------------------------
 
+/// Storage backend for the response cache.
+#[derive(Debug, Clone, Default)]
+pub enum CacheBackend {
+    /// In-memory LRU cache (default). No external dependencies.
+    #[default]
+    Memory,
+    /// OpenDAL-backed storage. Supports 40+ backends (S3, Redis, GCS, local FS, etc.).
+    #[cfg(feature = "opendal-cache")]
+    OpenDal {
+        /// OpenDAL scheme name (e.g. "s3", "redis", "fs", "gcs", "azblob").
+        scheme: String,
+        /// Backend-specific configuration as key-value pairs passed to OpenDAL.
+        config: std::collections::HashMap<String, String>,
+    },
+}
+
 /// Configuration for the response cache.
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
@@ -35,6 +51,8 @@ pub struct CacheConfig {
     pub max_entries: usize,
     /// Time-to-live for each cached entry.
     pub ttl: Duration,
+    /// Storage backend to use.
+    pub backend: CacheBackend,
 }
 
 impl Default for CacheConfig {
@@ -42,6 +60,7 @@ impl Default for CacheConfig {
         Self {
             max_entries: 256,
             ttl: Duration::from_secs(300),
+            backend: CacheBackend::Memory,
         }
     }
 }
@@ -392,6 +411,7 @@ mod tests {
     #[tokio::test]
     async fn cache_returns_cached_response_on_second_call() {
         let config = CacheConfig {
+            backend: CacheBackend::default(),
             max_entries: 10,
             ttl: Duration::from_secs(60),
         };
@@ -413,6 +433,7 @@ mod tests {
     #[tokio::test]
     async fn cache_does_not_cache_streaming_requests() {
         let config = CacheConfig {
+            backend: CacheBackend::default(),
             max_entries: 10,
             ttl: Duration::from_secs(60),
         };
@@ -430,6 +451,7 @@ mod tests {
     #[tokio::test]
     async fn cache_evicts_oldest_when_full() {
         let config = CacheConfig {
+            backend: CacheBackend::default(),
             max_entries: 1,
             ttl: Duration::from_secs(60),
         };
@@ -459,6 +481,7 @@ mod tests {
     #[tokio::test]
     async fn cache_different_requests_have_different_keys() {
         let config = CacheConfig {
+            backend: CacheBackend::default(),
             max_entries: 10,
             ttl: Duration::from_secs(60),
         };

@@ -127,6 +127,14 @@ where
                     let resp = client.rerank(r).await?;
                     Ok(LlmResponse::Rerank(resp))
                 }
+                LlmRequest::Search(r) => {
+                    let resp = client.search(r).await?;
+                    Ok(LlmResponse::Search(resp))
+                }
+                LlmRequest::Ocr(r) => {
+                    let resp = client.ocr(r).await?;
+                    Ok(LlmResponse::Ocr(resp))
+                }
             }
         })
     }

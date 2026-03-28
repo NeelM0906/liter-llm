@@ -931,6 +931,68 @@ public final class Types {
 			@JsonProperty("data") List<BatchObject> data) {
 	}
 
+	// ─── Search ──────────────────────────────────────────────────────────────
+
+	/** Request body for a search API call. */
+	@JsonInclude(JsonInclude.Include.NON_NULL)
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record SearchRequest(@JsonProperty("model") String model, @JsonProperty("query") String query,
+			@JsonProperty("max_results") Integer maxResults, @JsonProperty("search_domain") String searchDomain) {
+
+		/** Creates a search request with model and query only. */
+		public SearchRequest(String model, String query) {
+			this(model, query, null, null);
+		}
+	}
+
+	/** A single search result. */
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record SearchResult(@JsonProperty("title") String title, @JsonProperty("url") String url,
+			@JsonProperty("content") String content, @JsonProperty("score") double score) {
+	}
+
+	/** Response body for a search request. */
+	@JsonInclude(JsonInclude.Include.NON_NULL)
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record SearchResponse(@JsonProperty("results") List<SearchResult> results,
+			@JsonProperty("model") String model, @JsonProperty("usage") Usage usage) {
+	}
+
+	// ─── OCR ─────────────────────────────────────────────────────────────────
+
+	/** An image input for OCR processing. */
+	@JsonInclude(JsonInclude.Include.NON_NULL)
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record OcrImage(@JsonProperty("url") String url, @JsonProperty("b64_json") String b64Json) {
+
+		/** Creates an OCR image from a URL. */
+		public OcrImage(String url) {
+			this(url, null);
+		}
+	}
+
+	/** Request body for an OCR API call. */
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record OcrRequest(@JsonProperty("model") String model, @JsonProperty("images") List<OcrImage> images) {
+	}
+
+	/** Extracted text for a single page. */
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record OcrPage(@JsonProperty("page_number") int pageNumber, @JsonProperty("text") String text) {
+	}
+
+	/** OCR result for a single document/image. */
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record OcrDocument(@JsonProperty("index") int index, @JsonProperty("pages") List<OcrPage> pages) {
+	}
+
+	/** Response body for an OCR request. */
+	@JsonInclude(JsonInclude.Include.NON_NULL)
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record OcrResponse(@JsonProperty("documents") List<OcrDocument> documents,
+			@JsonProperty("model") String model, @JsonProperty("usage") Usage usage) {
+	}
+
 	// ─── Responses API ────────────────────────────────────────────────────────
 
 	/** Request body for creating a response via the Responses API. */

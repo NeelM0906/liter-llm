@@ -4,7 +4,9 @@ use crate::client::BoxStream;
 use crate::types::audio::{CreateSpeechRequest, CreateTranscriptionRequest, TranscriptionResponse};
 use crate::types::image::{CreateImageRequest, ImagesResponse};
 use crate::types::moderation::{ModerationRequest, ModerationResponse};
+use crate::types::ocr::{OcrRequest, OcrResponse};
 use crate::types::rerank::{RerankRequest, RerankResponse};
+use crate::types::search::{SearchRequest, SearchResponse};
 use crate::types::{
     ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, EmbeddingRequest, EmbeddingResponse,
     ModelsListResponse, Usage,
@@ -33,6 +35,10 @@ pub enum LlmRequest {
     Moderate(ModerationRequest),
     /// Document reranking.
     Rerank(RerankRequest),
+    /// Web/document search.
+    Search(SearchRequest),
+    /// Document OCR.
+    Ocr(OcrRequest),
 }
 
 impl LlmRequest {
@@ -52,6 +58,8 @@ impl LlmRequest {
             Self::Transcribe(_) => "transcribe",
             Self::Moderate(_) => "moderate",
             Self::Rerank(_) => "rerank",
+            Self::Search(_) => "search",
+            Self::Ocr(_) => "ocr",
         }
     }
 
@@ -68,6 +76,8 @@ impl LlmRequest {
             Self::Transcribe(_) => "transcribe",
             Self::Moderate(_) => "moderate",
             Self::Rerank(_) => "rerank",
+            Self::Search(_) => "search",
+            Self::Ocr(_) => "ocr",
         }
     }
 
@@ -82,6 +92,8 @@ impl LlmRequest {
             Self::Transcribe(r) => Some(r.model.as_str()),
             Self::Moderate(r) => r.model.as_deref(),
             Self::Rerank(r) => Some(r.model.as_str()),
+            Self::Search(r) => Some(r.model.as_str()),
+            Self::Ocr(r) => Some(r.model.as_str()),
             Self::ListModels => None,
         }
     }
@@ -107,6 +119,10 @@ pub enum LlmResponse {
     Moderate(ModerationResponse),
     /// Document reranking.
     Rerank(RerankResponse),
+    /// Search results.
+    Search(SearchResponse),
+    /// OCR results.
+    Ocr(OcrResponse),
 }
 
 impl LlmResponse {
@@ -119,13 +135,15 @@ impl LlmResponse {
         match self {
             Self::Chat(r) => r.usage.as_ref(),
             Self::Embed(r) => r.usage.as_ref(),
+            Self::Ocr(r) => r.usage.as_ref(),
             Self::ChatStream(_)
             | Self::ListModels(_)
             | Self::ImageGenerate(_)
             | Self::Speech(_)
             | Self::Transcribe(_)
             | Self::Moderate(_)
-            | Self::Rerank(_) => None,
+            | Self::Rerank(_)
+            | Self::Search(_) => None,
         }
     }
 }
@@ -145,6 +163,8 @@ impl std::fmt::Debug for LlmResponse {
             Self::Transcribe(r) => f.debug_tuple("Transcribe").field(r).finish(),
             Self::Moderate(r) => f.debug_tuple("Moderate").field(r).finish(),
             Self::Rerank(r) => f.debug_tuple("Rerank").field(r).finish(),
+            Self::Search(r) => f.debug_tuple("Search").field(r).finish(),
+            Self::Ocr(r) => f.debug_tuple("Ocr").field(r).finish(),
         }
     }
 }

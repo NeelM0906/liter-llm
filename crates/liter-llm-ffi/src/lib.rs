@@ -1185,6 +1185,54 @@ pub unsafe extern "C" fn literllm_rerank(client: *const LiterLlmClient, request_
     })
 }
 
+/// Perform a web/document search.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `request_json`: NUL-terminated JSON string conforming to the
+///   `SearchRequest` schema.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `SearchResponse` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literllm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literllm_client_new`.
+/// - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literllm_search(client: *const LiterLlmClient, request_json: *const c_char) -> *mut c_char {
+    json_request_response("literllm_search", client, request_json, |c, req| {
+        Box::pin(c.search(req))
+    })
+}
+
+/// Extract text from a document via OCR.
+///
+/// # Parameters
+///
+/// - `client`: A valid client pointer.
+/// - `request_json`: NUL-terminated JSON string conforming to the
+///   `OcrRequest` schema.
+///
+/// # Return value
+///
+/// Returns a heap-allocated NUL-terminated JSON string containing the
+/// `OcrResponse` on success, or `NULL` on failure.
+/// The caller must free the returned string with [`literllm_free_string`].
+///
+/// # Safety
+///
+/// - `client` must be a valid, non-null pointer returned by `literllm_client_new`.
+/// - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn literllm_ocr(client: *const LiterLlmClient, request_json: *const c_char) -> *mut c_char {
+    json_request_response("literllm_ocr", client, request_json, |c, req| Box::pin(c.ocr(req)))
+}
+
 // ---------------------------------------------------------------------------
 // File management API
 // ---------------------------------------------------------------------------
@@ -1931,6 +1979,7 @@ pub unsafe extern "C" fn literllm_client_new_with_config(config_json: *const c_c
         let cache_config = liter_llm::tower::CacheConfig {
             max_entries: cache.max_entries.unwrap_or(256),
             ttl: std::time::Duration::from_secs(cache.ttl_secs.unwrap_or(300)),
+            backend: Default::default(),
         };
         builder = builder.cache(cache_config);
     }

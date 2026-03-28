@@ -285,6 +285,7 @@ impl PhpLlmClient {
             cache_config,
             budget_config,
             hooks: Vec::new(),
+            ..Default::default()
         };
 
         let client = config::build_managed_client(opts).map_err(|e| PhpException::from(error::format_error(&e)))?;
@@ -503,6 +504,32 @@ impl PhpLlmClient {
             .map_err(|e| PhpException::from(format!("invalid rerank request JSON: {e}")))?;
 
         let response = block_on_future(self.inner.rerank(req))?.map_err(|e| PhpException::from(e.to_string()))?;
+
+        serde_json::to_string(&response).map_err(|e| PhpException::from(format!("serialization error: {e}")))
+    }
+
+    /// Perform a web/document search.
+    ///
+    /// @param string $requestJson JSON-encoded search request.
+    /// @return string JSON-encoded search response.
+    pub fn search(&self, request_json: String) -> PhpResult<String> {
+        let req: liter_llm::SearchRequest = serde_json::from_str(&request_json)
+            .map_err(|e| PhpException::from(format!("invalid search request JSON: {e}")))?;
+
+        let response = block_on_future(self.inner.search(req))?.map_err(|e| PhpException::from(e.to_string()))?;
+
+        serde_json::to_string(&response).map_err(|e| PhpException::from(format!("serialization error: {e}")))
+    }
+
+    /// Extract text from a document via OCR.
+    ///
+    /// @param string $requestJson JSON-encoded OCR request.
+    /// @return string JSON-encoded OCR response.
+    pub fn ocr(&self, request_json: String) -> PhpResult<String> {
+        let req: liter_llm::OcrRequest = serde_json::from_str(&request_json)
+            .map_err(|e| PhpException::from(format!("invalid OCR request JSON: {e}")))?;
+
+        let response = block_on_future(self.inner.ocr(req))?.map_err(|e| PhpException::from(e.to_string()))?;
 
         serde_json::to_string(&response).map_err(|e| PhpException::from(format!("serialization error: {e}")))
     }

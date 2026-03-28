@@ -260,6 +260,7 @@ impl LlmClient {
             let cache_config = liter_llm::tower::CacheConfig {
                 max_entries: cache.max_entries.map(|n| n as usize).unwrap_or(256),
                 ttl: std::time::Duration::from_secs(u64::from(cache.ttl_seconds.unwrap_or(300))),
+                backend: Default::default(),
             };
             builder = builder.cache(cache_config);
         }
@@ -645,6 +646,72 @@ impl LlmClient {
 
         let client = Arc::clone(&self.inner);
         match client.rerank(req).await {
+            Ok(result) => {
+                let js_val = to_js_value(&result)?;
+                let payload = serde_json::json!({ "request": request, "response": js_val });
+                invoke_hooks_on_response(&hooks, &payload.to_string()).await;
+                Ok(js_val)
+            }
+            Err(e) => {
+                let payload = serde_json::json!({ "request": request, "error": e.to_string() });
+                invoke_hooks_on_error(&hooks, &payload.to_string()).await;
+                Err(to_napi_err(e))
+            }
+        }
+    }
+
+    /// Perform a web/document search.
+    ///
+    /// Accepts a plain JS object matching the search API format.
+    /// Returns a `Promise<object>` resolving to a `SearchResponse`.
+    ///
+    /// ```js
+    /// const resp = await client.search({ model: "brave/web-search", query: "rust lang" });
+    /// console.log(resp.results);
+    /// ```
+    #[napi]
+    pub async fn search(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
+        let req: liter_llm::SearchRequest = from_js_value(request.clone())?;
+
+        let hooks = self.snapshot_hooks();
+        let req_json = serde_json::to_string(&request).unwrap_or_default();
+        invoke_hooks_on_request(&hooks, &req_json).await?;
+
+        let client = Arc::clone(&self.inner);
+        match client.search(req).await {
+            Ok(result) => {
+                let js_val = to_js_value(&result)?;
+                let payload = serde_json::json!({ "request": request, "response": js_val });
+                invoke_hooks_on_response(&hooks, &payload.to_string()).await;
+                Ok(js_val)
+            }
+            Err(e) => {
+                let payload = serde_json::json!({ "request": request, "error": e.to_string() });
+                invoke_hooks_on_error(&hooks, &payload.to_string()).await;
+                Err(to_napi_err(e))
+            }
+        }
+    }
+
+    /// Extract text from a document via OCR.
+    ///
+    /// Accepts a plain JS object matching the OCR API format.
+    /// Returns a `Promise<object>` resolving to an `OcrResponse`.
+    ///
+    /// ```js
+    /// const resp = await client.ocr({ model: "mistral/mistral-ocr-latest", document: { type: "document_url", url: "..." } });
+    /// console.log(resp.pages);
+    /// ```
+    #[napi]
+    pub async fn ocr(&self, request: serde_json::Value) -> napi::Result<serde_json::Value> {
+        let req: liter_llm::OcrRequest = from_js_value(request.clone())?;
+
+        let hooks = self.snapshot_hooks();
+        let req_json = serde_json::to_string(&request).unwrap_or_default();
+        invoke_hooks_on_request(&hooks, &req_json).await?;
+
+        let client = Arc::clone(&self.inner);
+        match client.ocr(req).await {
             Ok(result) => {
                 let js_val = to_js_value(&result)?;
                 let payload = serde_json::json!({ "request": request, "response": js_val });

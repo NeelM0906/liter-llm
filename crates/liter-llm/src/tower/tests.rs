@@ -21,7 +21,9 @@ use crate::tower::types::{LlmRequest, LlmResponse};
 use crate::types::audio::{CreateSpeechRequest, CreateTranscriptionRequest, TranscriptionResponse};
 use crate::types::image::{CreateImageRequest, ImagesResponse};
 use crate::types::moderation::{ModerationRequest, ModerationResponse};
+use crate::types::ocr::{OcrRequest, OcrResponse};
 use crate::types::rerank::{RerankRequest, RerankResponse};
+use crate::types::search::{SearchRequest, SearchResponse};
 use crate::types::{
     AssistantMessage, ChatCompletionRequest, ChatCompletionResponse, Choice, EmbeddingInput, EmbeddingObject,
     EmbeddingRequest, EmbeddingResponse, FinishReason, Message, ModelsListResponse, SystemMessage, Usage,
@@ -255,6 +257,24 @@ impl LlmClient for MockClient {
                 id: None,
                 results: vec![],
                 meta: None,
+            })
+        })
+    }
+
+    fn search(&self, _req: SearchRequest) -> BoxFuture<'_, SearchResponse> {
+        Box::pin(async {
+            Err(LiterLlmError::EndpointNotSupported {
+                endpoint: "search".into(),
+                provider: "mock".into(),
+            })
+        })
+    }
+
+    fn ocr(&self, _req: OcrRequest) -> BoxFuture<'_, OcrResponse> {
+        Box::pin(async {
+            Err(LiterLlmError::EndpointNotSupported {
+                endpoint: "ocr".into(),
+                provider: "mock".into(),
             })
         })
     }

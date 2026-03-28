@@ -365,6 +365,50 @@ LITER_LLM_EXPORT char *literllm_moderate(const LiterLlmClient *client, const cha
 LITER_LLM_EXPORT char *literllm_rerank(const LiterLlmClient *client, const char *request_json);
 
 /**
+ * Perform a web/document search.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `request_json`: NUL-terminated JSON string conforming to the
+ *   `SearchRequest` schema.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `SearchResponse` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literllm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literllm_client_new`.
+ * - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+ */
+LITER_LLM_EXPORT char *literllm_search(const LiterLlmClient *client, const char *request_json);
+
+/**
+ * Extract text from a document via OCR.
+ *
+ * # Parameters
+ *
+ * - `client`: A valid client pointer.
+ * - `request_json`: NUL-terminated JSON string conforming to the
+ *   `OcrRequest` schema.
+ *
+ * # Return value
+ *
+ * Returns a heap-allocated NUL-terminated JSON string containing the
+ * `OcrResponse` on success, or `NULL` on failure.
+ * The caller must free the returned string with [`literllm_free_string`].
+ *
+ * # Safety
+ *
+ * - `client` must be a valid, non-null pointer returned by `literllm_client_new`.
+ * - `request_json` must be a valid, non-null, NUL-terminated UTF-8 JSON string.
+ */
+LITER_LLM_EXPORT char *literllm_ocr(const LiterLlmClient *client, const char *request_json);
+
+/**
  * Upload a file.
  *
  * # Parameters

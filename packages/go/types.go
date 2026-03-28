@@ -734,6 +734,64 @@ type BatchListResponse struct {
 	Data   []BatchObject `json:"data"`
 }
 
+// ─── Search ──────────────────────────────────────────────────────────────────
+
+// SearchRequest is the body for a search API call.
+type SearchRequest struct {
+	Model        string  `json:"model"`
+	Query        string  `json:"query"`
+	MaxResults   *uint32 `json:"max_results,omitempty"`
+	SearchDomain *string `json:"search_domain,omitempty"`
+}
+
+// SearchResult holds a single search result.
+type SearchResult struct {
+	Title   string  `json:"title"`
+	URL     string  `json:"url"`
+	Content string  `json:"content"`
+	Score   float64 `json:"score"`
+}
+
+// SearchResponse is the response body for a search request.
+type SearchResponse struct {
+	Results []SearchResult `json:"results"`
+	Model   string         `json:"model"`
+	Usage   *Usage         `json:"usage,omitempty"`
+}
+
+// ─── OCR ─────────────────────────────────────────────────────────────────────
+
+// OcrImage describes an image input for OCR processing.
+type OcrImage struct {
+	URL     *string `json:"url,omitempty"`
+	B64JSON *string `json:"b64_json,omitempty"`
+}
+
+// OcrRequest is the body for an OCR API call.
+type OcrRequest struct {
+	Model  string     `json:"model"`
+	Images []OcrImage `json:"images"`
+}
+
+// OcrPage holds the extracted text for a single page.
+type OcrPage struct {
+	PageNumber uint32 `json:"page_number"`
+	Text       string `json:"text"`
+}
+
+// OcrDocument holds the OCR result for a single document/image.
+type OcrDocument struct {
+	Index uint32    `json:"index"`
+	Pages []OcrPage `json:"pages"`
+}
+
+// OcrResponse is the response body for an OCR request.
+type OcrResponse struct {
+	Documents []OcrDocument `json:"documents"`
+	Model     string        `json:"model"`
+	Usage     *Usage        `json:"usage,omitempty"`
+}
+
 // ─── Responses ────────────────────────────────────────────────────────────────
 
 // CreateResponseRequest is the body for creating a response via the

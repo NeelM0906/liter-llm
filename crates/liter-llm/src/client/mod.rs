@@ -15,8 +15,10 @@ use crate::types::batch::{BatchListQuery, BatchListResponse, BatchObject, Create
 use crate::types::files::{CreateFileRequest, DeleteResponse, FileListQuery, FileListResponse, FileObject};
 use crate::types::image::{CreateImageRequest, ImagesResponse};
 use crate::types::moderation::{ModerationRequest, ModerationResponse};
+use crate::types::ocr::{OcrRequest, OcrResponse};
 use crate::types::rerank::{RerankRequest, RerankResponse};
 use crate::types::responses::{CreateResponseRequest, ResponseObject};
+use crate::types::search::{SearchRequest, SearchResponse};
 use crate::types::{
     ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, EmbeddingRequest, EmbeddingResponse,
     ModelsListResponse,
@@ -96,6 +98,12 @@ pub trait LlmClient: Send + Sync {
 
     /// Rerank documents by relevance to a query.
     fn rerank(&self, req: RerankRequest) -> BoxFuture<'_, RerankResponse>;
+
+    /// Perform a web/document search.
+    fn search(&self, req: SearchRequest) -> BoxFuture<'_, SearchResponse>;
+
+    /// Extract text from a document via OCR.
+    fn ocr(&self, req: OcrRequest) -> BoxFuture<'_, OcrResponse>;
 }
 
 /// File management operations (upload, list, retrieve, delete).
@@ -553,6 +561,42 @@ impl LlmClient for DefaultClient {
                     .await?;
             self.provider.transform_response(&mut raw)?;
             serde_json::from_value::<RerankResponse>(raw).map_err(LiterLlmError::from)
+        })
+    }
+
+    fn search(&self, req: SearchRequest) -> BoxFuture<'_, SearchResponse> {
+        Box::pin(async move {
+            let (url, _cached_auth, body_json, body_bytes) =
+                self.prepare_request(&req, self.provider.search_path(), &req.model, None)?;
+
+            let auth_header = self.resolve_auth_header().await?;
+            let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+
+            let auth = auth_header.as_ref().map(str_pair);
+            let mut raw =
+                http::request::post_json_raw(&self.http, &url, auth, &extra, body_bytes, self.config.max_retries)
+                    .await?;
+            self.provider.transform_response(&mut raw)?;
+            serde_json::from_value::<SearchResponse>(raw).map_err(LiterLlmError::from)
+        })
+    }
+
+    fn ocr(&self, req: OcrRequest) -> BoxFuture<'_, OcrResponse> {
+        Box::pin(async move {
+            let (url, _cached_auth, body_json, body_bytes) =
+                self.prepare_request(&req, self.provider.ocr_path(), &req.model, None)?;
+
+            let auth_header = self.resolve_auth_header().await?;
+            let all_headers = self.all_headers("POST", &url, &body_json, &body_bytes);
+            let extra: Vec<(&str, &str)> = all_headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+
+            let auth = auth_header.as_ref().map(str_pair);
+            let mut raw =
+                http::request::post_json_raw(&self.http, &url, auth, &extra, body_bytes, self.config.max_retries)
+                    .await?;
+            self.provider.transform_response(&mut raw)?;
+            serde_json::from_value::<OcrResponse>(raw).map_err(LiterLlmError::from)
         })
     }
 }

@@ -41,6 +41,8 @@
 
 pub mod budget;
 pub mod cache;
+#[cfg(feature = "opendal-cache")]
+pub mod cache_opendal;
 pub mod cooldown;
 pub mod cost;
 pub mod fallback;
@@ -60,7 +62,9 @@ pub mod types;
 pub use tower::ServiceExt;
 
 pub use budget::{BudgetConfig, BudgetLayer, BudgetService, BudgetState, Enforcement};
-pub use cache::{CacheConfig, CacheLayer, CacheService, CacheStore, CachedResponse, InMemoryStore};
+pub use cache::{CacheBackend, CacheConfig, CacheLayer, CacheService, CacheStore, CachedResponse, InMemoryStore};
+#[cfg(feature = "opendal-cache")]
+pub use cache_opendal::OpenDalCacheStore;
 pub use cooldown::{CooldownLayer, CooldownService};
 pub use cost::{CostTrackingLayer, CostTrackingService};
 pub use fallback::{FallbackLayer, FallbackService};

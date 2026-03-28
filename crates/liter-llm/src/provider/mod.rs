@@ -233,6 +233,16 @@ pub trait Provider: Send + Sync {
         "/responses"
     }
 
+    /// Path for the web/document search endpoint.
+    fn search_path(&self) -> &str {
+        "/search"
+    }
+
+    /// Path for the OCR (optical character recognition) endpoint.
+    fn ocr_path(&self) -> &str {
+        "/ocr"
+    }
+
     /// Whether streaming is supported.
     #[allow(dead_code)] // reserved for future provider-capability checking
     fn supports_streaming(&self) -> bool {

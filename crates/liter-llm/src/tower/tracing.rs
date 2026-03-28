@@ -158,7 +158,9 @@ fn record_response(span: &tracing::Span, resp: &LlmResponse) {
         | LlmResponse::Speech(_)
         | LlmResponse::Transcribe(_)
         | LlmResponse::Moderate(_)
-        | LlmResponse::Rerank(_) => {}
+        | LlmResponse::Rerank(_)
+        | LlmResponse::Search(_)
+        | LlmResponse::Ocr(_) => {}
     }
 
     // Record usage tokens from the shared accessor — avoids duplicating the

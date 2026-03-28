@@ -308,18 +308,37 @@ type LlmClient interface {
 
 	// CancelResponse cancels an in-progress response.
 	CancelResponse(ctx context.Context, responseID string) (*ResponseObject, error)
+
+	// Search performs a web search using the configured provider.
+	Search(ctx context.Context, req *SearchRequest) (*SearchResponse, error)
+
+	// Ocr performs optical character recognition on images.
+	Ocr(ctx context.Context, req *OcrRequest) (*OcrResponse, error)
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
+// RateLimitConfig configures rate limiting behavior for the client.
+type RateLimitConfig struct {
+	// RequestsPerMinute is the maximum number of requests allowed per minute.
+	RequestsPerMinute int `json:"requests_per_minute"`
+	// TokensPerMinute is the maximum number of tokens allowed per minute.
+	TokensPerMinute int `json:"tokens_per_minute,omitempty"`
+}
+
 // ClientConfig holds all options for constructing a [Client].
 // Use [NewConfig] or individual With* option functions.
 type ClientConfig struct {
-	apiKey     string
-	baseURL    string
-	httpClient *http.Client
-	cache      *CacheConfig
-	budget     *BudgetConfig
+	apiKey       string
+	baseURL      string
+	httpClient   *http.Client
+	cache        *CacheConfig
+	budget       *BudgetConfig
+	cooldown     time.Duration
+	rateLimit    *RateLimitConfig
+	healthCheck  time.Duration
+	costTracking bool
+	tracing      bool
 }
 
 // Option is a functional option for [NewClient].
@@ -371,6 +390,46 @@ func WithCache(cfg CacheConfig) Option {
 func WithBudget(cfg BudgetConfig) Option {
 	return func(c *ClientConfig) {
 		c.budget = &cfg
+	}
+}
+
+// WithCooldown sets the cooldown duration between consecutive requests.
+// When set to a positive duration, the client will pause between requests
+// to avoid overwhelming the provider.
+func WithCooldown(d time.Duration) Option {
+	return func(c *ClientConfig) {
+		c.cooldown = d
+	}
+}
+
+// WithRateLimit enables rate limiting with the given configuration.
+func WithRateLimit(cfg RateLimitConfig) Option {
+	return func(c *ClientConfig) {
+		c.rateLimit = &cfg
+	}
+}
+
+// WithHealthCheck enables periodic health checking at the given interval.
+// The client will ping the provider endpoint to verify connectivity.
+func WithHealthCheck(interval time.Duration) Option {
+	return func(c *ClientConfig) {
+		c.healthCheck = interval
+	}
+}
+
+// WithCostTracking enables or disables detailed cost tracking for all requests.
+// When enabled, the client records estimated costs per model and globally.
+func WithCostTracking(enabled bool) Option {
+	return func(c *ClientConfig) {
+		c.costTracking = enabled
+	}
+}
+
+// WithTracing enables or disables request/response tracing for debugging.
+// When enabled, the client emits structured trace events for each request.
+func WithTracing(enabled bool) Option {
+	return func(c *ClientConfig) {
+		c.tracing = enabled
 	}
 }
 
@@ -1572,6 +1631,111 @@ func (c *Client) CancelResponse(ctx context.Context, responseID string) (*Respon
 	}
 
 	c.runOnResponse(ctx, responseID, &result)
+	return &result, nil
+}
+
+// ─── Search & OCR ────────────────────────────────────────────────────────────
+
+// Search performs a web search using the configured provider.
+func (c *Client) Search(ctx context.Context, req *SearchRequest) (*SearchResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request must not be nil", ErrInvalidRequest)
+	}
+	if req.Model == "" {
+		return nil, fmt.Errorf("%w: model is required", ErrInvalidRequest)
+	}
+	if req.Query == "" {
+		return nil, fmt.Errorf("%w: query is required", ErrInvalidRequest)
+	}
+
+	// Budget check before request.
+	if c.budget != nil {
+		if err := c.budget.checkBudget(req.Model, c.config.budget); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := c.runOnRequest(ctx, req); err != nil {
+		return nil, err
+	}
+
+	body, err := marshalBody(req)
+	if err != nil {
+		c.runOnError(ctx, req, err)
+		return nil, err
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodPost, "/search", body, false)
+	if err != nil {
+		c.runOnError(ctx, req, err)
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		c.runOnError(ctx, req, err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result SearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		decodeErr := fmt.Errorf("literllm: decode search response: %w", err)
+		c.runOnError(ctx, req, decodeErr)
+		return nil, decodeErr
+	}
+
+	c.runOnResponse(ctx, req, &result)
+	return &result, nil
+}
+
+// Ocr performs optical character recognition on images.
+func (c *Client) Ocr(ctx context.Context, req *OcrRequest) (*OcrResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request must not be nil", ErrInvalidRequest)
+	}
+	if req.Model == "" {
+		return nil, fmt.Errorf("%w: model is required", ErrInvalidRequest)
+	}
+
+	// Budget check before request.
+	if c.budget != nil {
+		if err := c.budget.checkBudget(req.Model, c.config.budget); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := c.runOnRequest(ctx, req); err != nil {
+		return nil, err
+	}
+
+	body, err := marshalBody(req)
+	if err != nil {
+		c.runOnError(ctx, req, err)
+		return nil, err
+	}
+
+	httpReq, err := c.buildRequest(ctx, http.MethodPost, "/ocr", body, false)
+	if err != nil {
+		c.runOnError(ctx, req, err)
+		return nil, err
+	}
+
+	resp, err := c.do(httpReq)
+	if err != nil {
+		c.runOnError(ctx, req, err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result OcrResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		decodeErr := fmt.Errorf("literllm: decode ocr response: %w", err)
+		c.runOnError(ctx, req, decodeErr)
+		return nil, decodeErr
+	}
+
+	c.runOnResponse(ctx, req, &result)
 	return &result, nil
 }
 

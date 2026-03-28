@@ -7,8 +7,10 @@ pub mod files;
 pub mod image;
 pub mod models;
 pub mod moderation;
+pub mod ocr;
 pub mod rerank;
 pub mod responses;
+pub mod search;
 
 pub use audio::*;
 pub use batch::*;
@@ -19,5 +21,7 @@ pub use files::*;
 pub use image::*;
 pub use models::*;
 pub use moderation::*;
+pub use ocr::*;
 pub use rerank::*;
 pub use responses::*;
+pub use search::*;

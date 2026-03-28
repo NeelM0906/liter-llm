@@ -431,6 +431,56 @@ public final class LlmClient implements AutoCloseable {
 		}
 	}
 
+	// ─── Search & OCR ────────────────────────────────────────────────────────
+
+	/**
+	 * Performs a web search using the configured provider.
+	 *
+	 * @param request
+	 *            the search request
+	 * @return the search response
+	 * @throws LlmException
+	 *             if the request fails for any reason
+	 */
+	public SearchResponse search(SearchRequest request) throws LlmException {
+		checkBudget(request.model());
+		runOnRequest(request);
+		try {
+			String body = serialize(request);
+			String responseBody = post("/search", body);
+			SearchResponse response = deserialize(responseBody, SearchResponse.class);
+			runOnResponse(request, response);
+			return response;
+		} catch (LlmException e) {
+			runOnError(request, e);
+			throw e;
+		}
+	}
+
+	/**
+	 * Performs optical character recognition on images.
+	 *
+	 * @param request
+	 *            the OCR request
+	 * @return the OCR response
+	 * @throws LlmException
+	 *             if the request fails for any reason
+	 */
+	public OcrResponse ocr(OcrRequest request) throws LlmException {
+		checkBudget(request.model());
+		runOnRequest(request);
+		try {
+			String body = serialize(request);
+			String responseBody = post("/ocr", body);
+			OcrResponse response = deserialize(responseBody, OcrResponse.class);
+			runOnResponse(request, response);
+			return response;
+		} catch (LlmException e) {
+			runOnError(request, e);
+			throw e;
+		}
+	}
+
 	// ─── File Management ──────────────────────────────────────────────────────
 
 	/**
@@ -1237,6 +1287,66 @@ public final class LlmClient implements AutoCloseable {
 		 */
 		public Builder budget(BudgetConfig budgetConfig) {
 			this.budgetConfig = budgetConfig;
+			return this;
+		}
+
+		/**
+		 * Sets the cooldown duration between consecutive requests.
+		 *
+		 * @param cooldown
+		 *            cooldown duration
+		 * @return this builder
+		 */
+		public Builder cooldown(Duration cooldown) {
+			this.cooldown = cooldown;
+			return this;
+		}
+
+		/**
+		 * Enables rate limiting with the given requests-per-minute limit.
+		 *
+		 * @param requestsPerMinute
+		 *            maximum requests per minute
+		 * @return this builder
+		 */
+		public Builder rateLimit(int requestsPerMinute) {
+			this.rateLimitRequestsPerMinute = requestsPerMinute;
+			return this;
+		}
+
+		/**
+		 * Enables periodic health checking at the given interval.
+		 *
+		 * @param interval
+		 *            health check interval
+		 * @return this builder
+		 */
+		public Builder healthCheck(Duration interval) {
+			this.healthCheckInterval = interval;
+			return this;
+		}
+
+		/**
+		 * Enables or disables detailed cost tracking for all requests.
+		 *
+		 * @param enabled
+		 *            whether to enable cost tracking
+		 * @return this builder
+		 */
+		public Builder costTracking(boolean enabled) {
+			this.costTracking = enabled;
+			return this;
+		}
+
+		/**
+		 * Enables or disables request/response tracing for debugging.
+		 *
+		 * @param enabled
+		 *            whether to enable tracing
+		 * @return this builder
+		 */
+		public Builder tracing(boolean enabled) {
+			this.tracing = enabled;
 			return this;
 		}
 

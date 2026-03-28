@@ -187,6 +187,7 @@ fn parse_cache_config(dict: &Bound<'_, PyDict>) -> PyResult<CacheConfig> {
     Ok(CacheConfig {
         max_entries,
         ttl: std::time::Duration::from_secs(ttl_seconds),
+        backend: Default::default(),
     })
 }
 
@@ -653,6 +654,44 @@ impl PyLlmClient {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let resp = client.rerank(req).await.map_err(to_py_err)?;
             Ok(PyRerankResponse::from(resp))
+        })
+    }
+
+    /// Perform a web/document search (async).
+    ///
+    /// Accepts the same keyword arguments as the search API.
+    /// Returns a coroutine that resolves to a ``dict`` with search results.
+    #[pyo3(signature = (**kwargs))]
+    fn search<'py>(&self, py: Python<'py>, kwargs: Option<Bound<'py, PyDict>>) -> PyResult<Bound<'py, PyAny>> {
+        let dict =
+            kwargs.ok_or_else(|| PyValueError::new_err("search() requires keyword arguments (model, query, ...)"))?;
+        let value = kwargs_to_json(&dict)?;
+        let req: liter_llm::SearchRequest =
+            serde_json::from_value(value).map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.search(req).await.map_err(to_py_err)?;
+            to_json_value(&resp)
+        })
+    }
+
+    /// Extract text from a document via OCR (async).
+    ///
+    /// Accepts the same keyword arguments as the OCR API.
+    /// Returns a coroutine that resolves to a ``dict`` with OCR results.
+    #[pyo3(signature = (**kwargs))]
+    fn ocr<'py>(&self, py: Python<'py>, kwargs: Option<Bound<'py, PyDict>>) -> PyResult<Bound<'py, PyAny>> {
+        let dict =
+            kwargs.ok_or_else(|| PyValueError::new_err("ocr() requires keyword arguments (model, document, ...)"))?;
+        let value = kwargs_to_json(&dict)?;
+        let req: liter_llm::OcrRequest =
+            serde_json::from_value(value).map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        let client = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let resp = client.ocr(req).await.map_err(to_py_err)?;
+            to_json_value(&resp)
         })
     }
 

@@ -7,7 +7,7 @@ use crate::auth::CredentialProvider;
 #[cfg(feature = "native-http")]
 use crate::error::{LiterLlmError, Result};
 #[cfg(feature = "tower")]
-use crate::tower::{BudgetConfig, CacheConfig, CacheStore, LlmHook};
+use crate::tower::{BudgetConfig, CacheConfig, CacheStore, LlmHook, RateLimitConfig};
 
 /// Configuration for an LLM client.
 ///
@@ -67,6 +67,29 @@ pub struct ClientConfig {
     /// config.
     #[cfg(feature = "tower")]
     pub hooks: Vec<Arc<dyn LlmHook>>,
+
+    /// Cooldown duration after transient errors (rate limit, timeout, server error).
+    /// When set, the client rejects requests with `ServiceUnavailable` during cooldown.
+    #[cfg(feature = "tower")]
+    pub cooldown_duration: Option<Duration>,
+
+    /// Per-model rate limiting configuration (RPM/TPM).
+    #[cfg(feature = "tower")]
+    pub rate_limit_config: Option<RateLimitConfig>,
+
+    /// Background health check interval. When set, periodically probes the provider
+    /// and rejects requests when the provider is unhealthy.
+    #[cfg(feature = "tower")]
+    pub health_check_interval: Option<Duration>,
+
+    /// Enable per-request cost tracking. Costs are accumulated atomically and
+    /// logged via `tracing::info`.
+    #[cfg(feature = "tower")]
+    pub enable_cost_tracking: bool,
+
+    /// Enable OpenTelemetry-compatible tracing spans for every request.
+    #[cfg(feature = "tower")]
+    pub enable_tracing: bool,
 }
 
 impl ClientConfig {
@@ -87,6 +110,16 @@ impl ClientConfig {
             budget_config: None,
             #[cfg(feature = "tower")]
             hooks: Vec::new(),
+            #[cfg(feature = "tower")]
+            cooldown_duration: None,
+            #[cfg(feature = "tower")]
+            rate_limit_config: None,
+            #[cfg(feature = "tower")]
+            health_check_interval: None,
+            #[cfg(feature = "tower")]
+            enable_cost_tracking: false,
+            #[cfg(feature = "tower")]
+            enable_tracing: false,
         }
     }
 
@@ -122,7 +155,12 @@ impl std::fmt::Debug for ClientConfig {
             dbg.field("cache_config", &self.cache_config)
                 .field("cache_store", &self.cache_store.as_ref().map(|_| "[configured]"))
                 .field("budget_config", &self.budget_config)
-                .field("hooks_count", &self.hooks.len());
+                .field("hooks_count", &self.hooks.len())
+                .field("cooldown_duration", &self.cooldown_duration)
+                .field("rate_limit_config", &self.rate_limit_config)
+                .field("health_check_interval", &self.health_check_interval)
+                .field("enable_cost_tracking", &self.enable_cost_tracking)
+                .field("enable_tracing", &self.enable_tracing);
         }
 
         dbg.finish()
@@ -251,6 +289,57 @@ impl ClientConfigBuilder {
     #[cfg(feature = "tower")]
     pub fn hooks(mut self, hooks: Vec<Arc<dyn LlmHook>>) -> Self {
         self.config.hooks = hooks;
+        self
+    }
+
+    /// Set the cooldown duration after transient errors.
+    ///
+    /// When set, the client rejects requests with `ServiceUnavailable` for
+    /// the given duration after a transient error (rate limit, timeout,
+    /// server error).
+    #[cfg(feature = "tower")]
+    pub fn cooldown(mut self, duration: Duration) -> Self {
+        self.config.cooldown_duration = Some(duration);
+        self
+    }
+
+    /// Set per-model rate limiting configuration.
+    ///
+    /// When set, requests exceeding the configured RPM or TPM limits are
+    /// rejected with [`LiterLlmError::RateLimited`](crate::error::LiterLlmError::RateLimited).
+    #[cfg(feature = "tower")]
+    pub fn rate_limit(mut self, config: RateLimitConfig) -> Self {
+        self.config.rate_limit_config = Some(config);
+        self
+    }
+
+    /// Set the background health check interval.
+    ///
+    /// When set, the client periodically probes the provider and rejects
+    /// requests when the provider is unhealthy.
+    #[cfg(feature = "tower")]
+    pub fn health_check(mut self, interval: Duration) -> Self {
+        self.config.health_check_interval = Some(interval);
+        self
+    }
+
+    /// Enable or disable per-request cost tracking.
+    ///
+    /// When enabled, estimated USD cost is recorded on the current tracing
+    /// span as `gen_ai.usage.cost`.
+    #[cfg(feature = "tower")]
+    pub fn cost_tracking(mut self, enabled: bool) -> Self {
+        self.config.enable_cost_tracking = enabled;
+        self
+    }
+
+    /// Enable or disable OpenTelemetry-compatible tracing spans.
+    ///
+    /// When enabled, every request is wrapped in a `gen_ai` tracing span
+    /// with semantic convention attributes.
+    #[cfg(feature = "tower")]
+    pub fn tracing(mut self, enabled: bool) -> Self {
+        self.config.enable_tracing = enabled;
         self
     }
 
