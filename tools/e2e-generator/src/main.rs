@@ -1,4 +1,5 @@
 mod fixture;
+mod format;
 mod generators;
 
 use anyhow::Result;
@@ -99,6 +100,7 @@ fn main() -> Result<()> {
             };
             for lang in langs {
                 generators::run_generator(lang.as_str(), &fixtures, output.as_path())?;
+                format::format_language(lang.as_str(), output.as_path());
             }
         }
         Commands::List { fixtures } => {
