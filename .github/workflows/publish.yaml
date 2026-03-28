@@ -1009,6 +1009,15 @@ jobs:
       contents: write
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - name: Ensure GitHub release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || gh release create "$TAG" --draft --repo "${{ github.repository }}" --title "$TAG"
+        shell: bash
       - uses: actions/download-artifact@v7
         with:
           pattern: elixir-nifs-*
@@ -1016,7 +1025,7 @@ jobs:
           merge-multiple: true
       - name: Upload to GitHub Release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: gh release upload "$TAG" elixir-nifs/*.tar.gz --clobber --repo ${{ github.repository }}
         shell: bash
@@ -1030,6 +1039,15 @@ jobs:
       contents: write
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - name: Ensure GitHub release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || gh release create "$TAG" --draft --repo "${{ github.repository }}" --title "$TAG"
+        shell: bash
       - uses: actions/download-artifact@v7
         with:
           pattern: php-ext-*
@@ -1037,7 +1055,7 @@ jobs:
           merge-multiple: true
       - name: Upload to GitHub Release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: gh release upload "$TAG" php-ext-artifacts/*.tar.gz --clobber --repo ${{ github.repository }}
         shell: bash
@@ -1220,6 +1238,7 @@ jobs:
           package-dir: crates/liter-llm-node
           npm-tag: ${{ needs.prepare.outputs.npm_tag }}
           dry-run: ${{ needs.prepare.outputs.dry_run }}
+          provenance: "true"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -1240,7 +1259,7 @@ jobs:
         run: |
           pnpm install
           pnpm --filter @kreuzberg/liter-llm build
-          npm publish --tag "$NPM_TAG" --access public
+          npm publish --tag "$NPM_TAG" --access public --provenance
         working-directory: packages/typescript
         shell: bash
 
@@ -1451,7 +1470,7 @@ jobs:
 
   publish-hex:
     name: Publish Hex.pm
-    needs: [prepare, validate-versions, check-hex, build-elixir-nifs, upload-elixir-nifs]
+    needs: [prepare, validate-versions, check-hex, publish-crates, build-elixir-nifs, upload-elixir-nifs]
     if: |
       always() &&
       needs.prepare.outputs.release_elixir == 'true' &&
