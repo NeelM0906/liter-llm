@@ -31,7 +31,9 @@ import java.util.function.Consumer;
  * {@code "groq/llama3-70b"} routes to Groq). Implements {@link AutoCloseable};
  * close after use to release the underlying {@link HttpClient} executor.
  *
- * <h2>Example</h2>
+ * <p>
+ * <b>Example:</b>
+ * </p>
  *
  * <pre>{@code
  * try (var client = LlmClient.builder().apiKey(System.getenv("OPENAI_API_KEY")).build()) {
@@ -197,7 +199,9 @@ public final class LlmClient implements AutoCloseable {
 	 * The {@code stream} field on the request is forced to {@code true}. Streaming
 	 * bypasses the response cache.
 	 *
-	 * <h2>Example</h2>
+	 * <p>
+	 * <b>Example:</b>
+	 * </p>
 	 *
 	 * <pre>{@code
 	 * var request = ChatCompletionRequest.builder("gpt-4o-mini", List.of(new Types.UserMessage("Hello!"))).maxTokens(256L)

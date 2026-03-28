@@ -19,7 +19,7 @@ func TestBudget(t *testing.T) {
 				Path:         "/chat/completions",
 				Method:       "POST",
 				Status:       200,
-				Body:         `{}`,
+				Body:         `{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"This should not be reached","role":"assistant"}}],"created":1711000000,"id":"chatcmpl-budget-enforced-001","model":"gpt-4","object":"chat.completion","usage":{"completion_tokens":6,"prompt_tokens":8,"total_tokens":14}}`,
 				StreamChunks: nil,
 			},
 		})
@@ -54,7 +54,7 @@ func TestBudget(t *testing.T) {
 				Path:         "/chat/completions",
 				Method:       "POST",
 				Status:       200,
-				Body:         `{}`,
+				Body:         `{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"This should not be reached","role":"assistant"}}],"created":1711000000,"id":"chatcmpl-budget-per-model-001","model":"gpt-4","object":"chat.completion","usage":{"completion_tokens":6,"prompt_tokens":8,"total_tokens":14}}`,
 				StreamChunks: nil,
 			},
 		})

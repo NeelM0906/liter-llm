@@ -58,6 +58,8 @@ fn write_composer_json(dir: &Utf8Path) -> Result<()> {
             "url": "../../packages/php"
         }
     ],
+    "minimum-stability": "dev",
+    "prefer-stable": true,
     "require": {
         "php": ">=8.2",
         "kreuzberg/liter-llm": "*"

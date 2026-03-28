@@ -14,7 +14,14 @@ class BudgetTest {
   void budgetEnforced() throws Exception {
     try (Helpers.MockServer server =
         new Helpers.MockServer(
-            List.of(new Helpers.MockRoute("/chat/completions", "POST", 200, "{}")))) {
+            List.of(
+                new Helpers.MockRoute(
+                    "/chat/completions",
+                    "POST",
+                    200,
+                    "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"This"
+                        + " should not be"
+                        + " reached\",\"role\":\"assistant\"}}],\"created\":1711000000,\"id\":\"chatcmpl-budget-enforced-001\",\"model\":\"gpt-4\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":6,\"prompt_tokens\":8,\"total_tokens\":14}}")))) {
       String mockUrl = server.url;
 
       // TDD: Budget tests — will fail until budget feature is implemented.
@@ -41,7 +48,14 @@ class BudgetTest {
   void budgetPerModel() throws Exception {
     try (Helpers.MockServer server =
         new Helpers.MockServer(
-            List.of(new Helpers.MockRoute("/chat/completions", "POST", 200, "{}")))) {
+            List.of(
+                new Helpers.MockRoute(
+                    "/chat/completions",
+                    "POST",
+                    200,
+                    "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"This"
+                        + " should not be"
+                        + " reached\",\"role\":\"assistant\"}}],\"created\":1711000000,\"id\":\"chatcmpl-budget-per-model-001\",\"model\":\"gpt-4\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":6,\"prompt_tokens\":8,\"total_tokens\":14}}")))) {
       String mockUrl = server.url;
 
       // TDD: Budget tests — will fail until budget feature is implemented.

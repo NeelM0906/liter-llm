@@ -8,6 +8,8 @@
             "url": "../../packages/php"
         }
     ],
+    "minimum-stability": "dev",
+    "prefer-stable": true,
     "require": {
         "php": ">=8.2",
         "kreuzberg/liter-llm": "*"

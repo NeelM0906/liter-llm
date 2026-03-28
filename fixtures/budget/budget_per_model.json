@@ -23,7 +23,27 @@
 		},
 		"mock_response": {
 			"status": 200,
-			"body": {}
+			"body": {
+				"id": "chatcmpl-budget-per-model-001",
+				"object": "chat.completion",
+				"created": 1711000000,
+				"model": "gpt-4",
+				"choices": [
+					{
+						"index": 0,
+						"message": {
+							"role": "assistant",
+							"content": "This should not be reached"
+						},
+						"finish_reason": "stop"
+					}
+				],
+				"usage": {
+					"prompt_tokens": 8,
+					"completion_tokens": 6,
+					"total_tokens": 14
+				}
+			}
 		}
 	},
 	"assertions": {

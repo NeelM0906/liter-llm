@@ -9,14 +9,15 @@ use liter_llm::{ClientConfigBuilder, DefaultClient, LlmClient};
 /// Tests that a request is rejected when budget is exceeded (TDD -- will fail until budget is implemented)
 #[tokio::test]
 async fn budget_enforced() {
-    let server = mock_server::MockServer::start(vec![mock_server::MockRoute {
-        path: "/chat/completions",
-        method: "POST",
-        status: 200,
-        body: r#"{}"#.to_string(),
-        stream_chunks: vec![],
-    }])
-    .await;
+    let server = mock_server::MockServer::start(vec![
+        mock_server::MockRoute {
+            path: "/chat/completions",
+            method: "POST",
+            status: 200,
+            body: r#"{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"This should not be reached","role":"assistant"}}],"created":1711000000,"id":"chatcmpl-budget-enforced-001","model":"gpt-4","object":"chat.completion","usage":{"completion_tokens":6,"prompt_tokens":8,"total_tokens":14}}"#.to_string(),
+            stream_chunks: vec![],
+        },
+    ]).await;
 
     // TDD: Budget tests -- will fail until budget middleware is implemented.
     let config = ClientConfigBuilder::new("test-key")
@@ -45,14 +46,15 @@ async fn budget_enforced() {
 /// Tests per-model budget limit (TDD -- will fail until budget is implemented)
 #[tokio::test]
 async fn budget_per_model() {
-    let server = mock_server::MockServer::start(vec![mock_server::MockRoute {
-        path: "/chat/completions",
-        method: "POST",
-        status: 200,
-        body: r#"{}"#.to_string(),
-        stream_chunks: vec![],
-    }])
-    .await;
+    let server = mock_server::MockServer::start(vec![
+        mock_server::MockRoute {
+            path: "/chat/completions",
+            method: "POST",
+            status: 200,
+            body: r#"{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"This should not be reached","role":"assistant"}}],"created":1711000000,"id":"chatcmpl-budget-per-model-001","model":"gpt-4","object":"chat.completion","usage":{"completion_tokens":6,"prompt_tokens":8,"total_tokens":14}}"#.to_string(),
+            stream_chunks: vec![],
+        },
+    ]).await;
 
     // TDD: Budget tests -- will fail until budget middleware is implemented.
     let config = ClientConfigBuilder::new("test-key")

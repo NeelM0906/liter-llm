@@ -298,8 +298,9 @@ def update_cargo_toml_dep_version(file_path: Path, version: str) -> tuple[bool, 
     content = file_path.read_text(encoding="utf-8")
     original = content
 
-    # Match: liter-llm = { path = "...", version = "x.y.z", ... }
-    pattern = r'(liter-llm\s*=\s*\{[^}]*version\s*=\s*")[^"]+"'
+    # Match: liter-llm* = { path = "...", version = "x.y.z", ... }
+    # Covers both liter-llm and liter-llm-bindings-core deps.
+    pattern = r'(liter-llm[\w-]*\s*=\s*\{[^}]*version\s*=\s*")[^"]+"'
     match = re.search(pattern, content)
     old_version = match.group(0).rsplit('"', 2)[-2] if match else "NOT FOUND"
 
@@ -481,6 +482,17 @@ def build_targets(
         # C FFI header and Cargo.toml dep version
         (repo_root / "crates" / "liter-llm-ffi" / "liter_llm.h", update_c_header),
         (repo_root / "crates" / "liter-llm-ffi" / "Cargo.toml", update_cargo_toml_dep_version),
+        # Binding crate Cargo.toml dep versions (path + version for publishing)
+        (repo_root / "crates" / "liter-llm-bindings-core" / "Cargo.toml", update_cargo_toml_dep_version),
+        (repo_root / "crates" / "liter-llm-py" / "Cargo.toml", update_cargo_toml_dep_version),
+        (repo_root / "crates" / "liter-llm-node" / "Cargo.toml", update_cargo_toml_dep_version),
+        (repo_root / "crates" / "liter-llm-php" / "Cargo.toml", update_cargo_toml_dep_version),
+        (repo_root / "crates" / "liter-llm-wasm" / "Cargo.toml", update_cargo_toml_dep_version),
+        # Elixir Rustler NIF Cargo.toml
+        (
+            repo_root / "packages" / "elixir" / "native" / "liter_llm_rustler" / "Cargo.toml",
+            update_cargo_toml_dep_version,
+        ),
         # NAPI-RS root package.json and platform packages
         (repo_root / "crates" / "liter-llm-node" / "package.json", update_package_json),
         (repo_root / "crates" / "liter-llm-node" / "npm" / "linux-x64-gnu" / "package.json", update_package_json),
@@ -490,7 +502,10 @@ def build_targets(
         # WASM package.json
         (repo_root / "crates" / "liter-llm-wasm" / "package.json", update_package_json),
         # Ruby native Cargo.toml (not in workspace — has own version)
-        (repo_root / "packages" / "ruby" / "ext" / "liter_llm_rb" / "native" / "Cargo.toml", update_cargo_toml_dep_version),
+        (
+            repo_root / "packages" / "ruby" / "ext" / "liter_llm_rb" / "native" / "Cargo.toml",
+            update_cargo_toml_dep_version,
+        ),
     ]
 
 

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.5] - 2026-03-28
+
+### Added
+
+- `#[serde(deny_unknown_fields)]` on all request/config types for strict input validation
+- `param_mappings` wired into `ConfigDrivenProvider` — 8 providers now apply field renaming (e.g. `max_completion_tokens` → `max_tokens`)
+- 5 param_mappings tests including real provider integration test
+
+### Fixed
+
+- Python/PHP hook serialization: Debug format replaced with proper JSON via `serde_json`
+- PHP hook registry memory leak: cleanup on drop
+- `managed.rs` expect() replaced with proper error propagation
+- Version sync script now updates all binding crate Cargo.toml dep versions
+- FFI Cargo.toml: added missing `version` on `liter-llm-bindings-core` dep (crates.io publish fix)
+- PHP e2e composer.json: added `minimum-stability: dev` for RC versions
+- Java javadoc: fixed heading level error (`<h2>` → `<h3>`)
+- Node pnpm lockfile updated for RC version dependencies
+- e2e-generator PHP output: cargo fmt applied
+
+### Changed
+
+- Documentation overhaul: simple nav (Installation → Usage → API Reference), 150 snippets across 10 languages, all API docs expanded to full parity, comprehensive llms.txt
+
 ## [1.0.0-rc.4] - 2026-03-28
 
 ### Added
