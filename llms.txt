@@ -113,20 +113,58 @@ Part of the kreuzberg.dev ecosystem:
 | WebAssembly | npmjs.com/package/@kreuzberg/liter-llm-wasm | `pnpm add @kreuzberg/liter-llm-wasm` |
 | C / FFI | Build from source | `cargo build --release -p liter-llm-ffi` |
 
+## CLI Installation
+
+Homebrew:
+  brew tap kreuzberg-dev/tap && brew install liter-llm
+
+Cargo:
+  cargo install liter-llm-cli
+
+Docker:
+  docker pull ghcr.io/kreuzberg-dev/liter-llm
+
 ## Proxy Server
 
 OpenAI-compatible API gateway with 22 endpoints. Drop-in replacement for litellm proxy.
 
-Docker quickstart:
+Docker quickstart (35MB Chainguard image):
   docker run -p 4000:4000 -e LITER_LLM_MASTER_KEY=sk-key ghcr.io/kreuzberg-dev/liter-llm
 
 CLI:
   liter-llm api --config liter-llm-proxy.toml
-  liter-llm mcp --transport stdio
 
-Features: model routing (142+ providers), virtual API keys, rate limiting (RPM/TPM), cost tracking, budget enforcement, response caching, SSE streaming, OpenAPI 3.1 at /openapi.json, MCP server with 22 tools.
+Features: model routing (142+ providers), virtual API keys, rate limiting (RPM/TPM), cost tracking, budget enforcement, response caching, SSE streaming, OpenAPI 3.1 at /openapi.json.
 
 Config format: TOML with ${ENV_VAR} interpolation. Auto-discovers liter-llm-proxy.toml.
+
+Example config:
+  [server]
+  host = "0.0.0.0"
+  port = 4000
+
+  [auth]
+  master_key = "${LITER_LLM_MASTER_KEY}"
+
+  [[virtual_keys]]
+  key = "sk-team-frontend"
+  models = ["openai/*", "anthropic/*"]
+  rpm = 60
+  budget = 50.0
+
+  [[providers]]
+  name = "openai"
+  api_key = "${OPENAI_API_KEY}"
+
+## MCP Server
+
+Model Context Protocol server with 22 tools matching the REST API. Supports stdio and HTTP transports.
+
+CLI:
+  liter-llm mcp --transport stdio
+  liter-llm mcp --transport http --port 3001
+
+Tools: chat completions, streaming, embeddings, image generation, speech, transcription, moderation, search, OCR, reranking, file operations, batch operations, responses, model listing.
 
 ## Supported Providers (142+)
 

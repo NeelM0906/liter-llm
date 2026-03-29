@@ -605,6 +605,104 @@ client.addHook({
 
 10. **Go: check error returns and nil pointers.** Response fields like `Content` are pointers -- always nil-check before dereferencing.
 
+## CLI Installation
+
+### Homebrew
+
+```bash
+brew tap kreuzberg-dev/tap
+brew install liter-llm
+```
+
+### Cargo
+
+```bash
+cargo install liter-llm-cli
+```
+
+### Docker
+
+```bash
+docker pull ghcr.io/kreuzberg-dev/liter-llm
+```
+
+## Proxy Server
+
+liter-llm includes an OpenAI-compatible API gateway with 22 endpoints. It acts as a drop-in replacement for litellm proxy, routing requests to 142+ LLM providers.
+
+### Features
+
+- 22 OpenAI-compatible REST endpoints (chat, embeddings, images, audio, files, batches, responses, models)
+- Automatic model routing via provider prefixes
+- Virtual API keys for multi-tenant access control
+- Rate limiting (RPM/TPM per key or globally)
+- Cost tracking and budget enforcement
+- Response caching
+- SSE streaming
+- OpenAPI 3.1 spec at `/openapi.json`
+
+### Running the Proxy
+
+```bash
+liter-llm api --config liter-llm-proxy.toml
+```
+
+### Docker Quickstart
+
+```bash
+docker run -p 4000:4000 \
+  -e LITER_LLM_MASTER_KEY=sk-key \
+  ghcr.io/kreuzberg-dev/liter-llm
+```
+
+The Docker image (`ghcr.io/kreuzberg-dev/liter-llm`) is a 35MB Chainguard-based image.
+
+### Proxy Configuration
+
+The proxy uses TOML configuration with `${ENV_VAR}` interpolation. It auto-discovers `liter-llm-proxy.toml` in the current directory.
+
+```toml
+[server]
+host = "0.0.0.0"
+port = 4000
+
+[auth]
+master_key = "${LITER_LLM_MASTER_KEY}"
+
+[[virtual_keys]]
+key = "sk-team-frontend"
+models = ["openai/*", "anthropic/*"]
+rpm = 60
+tpm = 100000
+budget = 50.0
+
+[[providers]]
+name = "openai"
+api_key = "${OPENAI_API_KEY}"
+
+[[providers]]
+name = "anthropic"
+api_key = "${ANTHROPIC_API_KEY}"
+```
+
+## MCP Server
+
+liter-llm includes a Model Context Protocol (MCP) server exposing 22 tools that match the REST API endpoints. This allows MCP-compatible clients (Claude Desktop, Claude Code, etc.) to call LLM APIs through liter-llm.
+
+### Running the MCP Server
+
+```bash
+# stdio transport (for Claude Desktop / Claude Code)
+liter-llm mcp --transport stdio
+
+# HTTP transport
+liter-llm mcp --transport http --port 3001
+```
+
+### MCP Tools
+
+The MCP server exposes tools matching the proxy API: chat completions, streaming, embeddings, image generation, speech, transcription, moderation, search, OCR, reranking, file operations, batch operations, responses, and model listing.
+
 ## Additional Resources
 
 Detailed reference files for specific topics:
